@@ -1,21 +1,5 @@
 package com.orientechnologies.orient.test.database.auto;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
-import org.testng.Assert;
-import org.testng.annotations.AfterMethod;
-import org.testng.annotations.BeforeClass;
-import org.testng.annotations.Optional;
-import org.testng.annotations.Parameters;
-import org.testng.annotations.Test;
-
 import com.orientechnologies.orient.core.index.OCompositeKey;
 import com.orientechnologies.orient.core.index.OIndex;
 import com.orientechnologies.orient.core.index.OIndexDefinition;
@@ -26,28 +10,45 @@ import com.orientechnologies.orient.core.metadata.schema.OType;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.sql.OCommandSQL;
 import com.orientechnologies.orient.core.storage.ORecordDuplicatedException;
-import com.orientechnologies.orient.enterprise.channel.binary.OResponseProcessingException;
+import org.testng.Assert;
+import org.testng.annotations.*;
+import org.testng.annotations.Optional;
+
+import java.util.*;
 
 @Test(groups = { "index" })
-public class ClassIndexManagerTest  extends DocumentDBBaseTest {
+public class ClassIndexManagerTest extends DocumentDBBaseTest {
 
-	@Parameters(value = "url")
-	public ClassIndexManagerTest(@Optional String url) {
-		super(url);
-	}
+  @Parameters(value = "url")
+  public ClassIndexManagerTest(@Optional String url) {
+    super(url);
+  }
 
-	@BeforeClass
+  @BeforeClass
   public void beforeClass() throws Exception {
-		super.beforeClass();
+    super.beforeClass();
 
     final OSchema schema = database.getMetadata().getSchema();
+
+    if (schema.existsClass("classIndexManagerTestClass"))
+      schema.dropClass("classIndexManagerTestClass");
+
+    if (schema.existsClass("classIndexManagerTestClassTwo"))
+      schema.dropClass("classIndexManagerTestClassTwo");
+
+    if (schema.existsClass("classIndexManagerTestSuperClass"))
+      schema.dropClass("classIndexManagerTestSuperClass");
+
+    if (schema.existsClass("classIndexManagerTestCompositeCollectionClass"))
+      schema.dropClass("classIndexManagerTestCompositeCollectionClass");
+
     final OClass superClass = schema.createClass("classIndexManagerTestSuperClass");
     final OProperty propertyZero = superClass.createProperty("prop0", OType.STRING);
-    propertyZero.createIndex(OClass.INDEX_TYPE.UNIQUE);
+    superClass.createIndex("classIndexManagerTestSuperClass.prop0", OClass.INDEX_TYPE.UNIQUE.toString(), null, new ODocument().fields("ignoreNullValues", true), new String[]{"prop0"});
 
     final OClass oClass = schema.createClass("classIndexManagerTestClass", superClass);
     final OProperty propOne = oClass.createProperty("prop1", OType.STRING);
-    propOne.createIndex(OClass.INDEX_TYPE.UNIQUE);
+    oClass.createIndex("classIndexManagerTestClass.prop1", OClass.INDEX_TYPE.UNIQUE.toString(), null, new ODocument().fields("ignoreNullValues", true), new String[]{"prop1"});
 
     final OProperty propTwo = oClass.createProperty("prop2", OType.INTEGER);
     propTwo.createIndex(OClass.INDEX_TYPE.NOTUNIQUE);
@@ -64,7 +65,8 @@ public class ClassIndexManagerTest  extends DocumentDBBaseTest {
     final OProperty propSix = oClass.createProperty("prop6", OType.EMBEDDEDSET, OType.STRING);
     propSix.createIndex(OClass.INDEX_TYPE.NOTUNIQUE);
 
-    oClass.createIndex("classIndexManagerComposite", OClass.INDEX_TYPE.UNIQUE, "prop1", "prop2");
+
+    oClass.createIndex("classIndexManagerComposite", OClass.INDEX_TYPE.UNIQUE.toString(), null, new ODocument().fields("ignoreNullValues", true), new String[]{"prop1", "prop2"});
 
     final OClass oClassTwo = schema.createClass("classIndexManagerTestClassTwo");
     oClassTwo.createProperty("prop1", OType.STRING);
@@ -75,22 +77,25 @@ public class ClassIndexManagerTest  extends DocumentDBBaseTest {
     compositeCollectionClass.createProperty("prop2", OType.EMBEDDEDLIST, OType.INTEGER);
 
     compositeCollectionClass
-        .createIndex("classIndexManagerTestIndexValueAndCollection", OClass.INDEX_TYPE.UNIQUE, "prop1", "prop2");
+        .createIndex("classIndexManagerTestIndexValueAndCollection", OClass.INDEX_TYPE.UNIQUE.toString(), null, new ODocument().fields("ignoreNullValues", true), new String[]{"prop1", "prop2"});
 
-    oClass.createIndex("classIndexManagerTestIndexOnPropertiesFromClassAndSuperclass", OClass.INDEX_TYPE.UNIQUE, "prop0", "prop1");
+    oClass.createIndex("classIndexManagerTestIndexOnPropertiesFromClassAndSuperclass", OClass.INDEX_TYPE.UNIQUE.toString(), null, new ODocument().fields("ignoreNullValues", true), new String[]{"prop0", "prop1"});
 
-    schema.save();
+    schema.reload();
 
     database.close();
   }
 
   @AfterMethod
   public void afterMethod() throws Exception {
-		database.command(new OCommandSQL("delete from classIndexManagerTestClass")).execute();
-		database.command(new OCommandSQL("delete from classIndexManagerTestClassTwo")).execute();
-		database.command(new OCommandSQL("delete from classIndexManagerTestSuperClass")).execute();
+    database.command(new OCommandSQL("delete from classIndexManagerTestClass")).execute();
+    database.command(new OCommandSQL("delete from classIndexManagerTestClassTwo")).execute();
+    database.command(new OCommandSQL("delete from classIndexManagerTestSuperClass")).execute();
 
-		super.afterMethod();
+    Assert.assertEquals(database.getMetadata().getIndexManager().getIndex("classIndexManagerTestClass.prop1").getSize(), 0);
+    Assert.assertEquals(database.getMetadata().getIndexManager().getIndex("classIndexManagerTestClass.prop2").getSize(), 0);
+
+    super.afterMethod();
   }
 
   public void testPropertiesCheckUniqueIndexDubKeysCreate() {
@@ -104,9 +109,6 @@ public class ClassIndexManagerTest  extends DocumentDBBaseTest {
     try {
       docTwo.field("prop1", "a");
       docTwo.save();
-    } catch (OResponseProcessingException e) {
-      Assert.assertTrue(e.getCause() instanceof ORecordDuplicatedException);
-      exceptionThrown = true;
     } catch (ORecordDuplicatedException e) {
       exceptionThrown = true;
     }
@@ -148,9 +150,6 @@ public class ClassIndexManagerTest  extends DocumentDBBaseTest {
     try {
       docTwo.field("prop0", "a");
       docTwo.save();
-    } catch (OResponseProcessingException e) {
-      Assert.assertTrue(e.getCause() instanceof ORecordDuplicatedException);
-      exceptionThrown = true;
     } catch (ORecordDuplicatedException e) {
       exceptionThrown = true;
     }
@@ -171,9 +170,6 @@ public class ClassIndexManagerTest  extends DocumentDBBaseTest {
     try {
       docTwo.field("prop1", "a");
       docTwo.save();
-    } catch (OResponseProcessingException e) {
-      Assert.assertTrue(e.getCause() instanceof ORecordDuplicatedException);
-      exceptionThrown = true;
     } catch (ORecordDuplicatedException e) {
       exceptionThrown = true;
     }

@@ -1,105 +1,147 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.tx;
 
-import com.orientechnologies.orient.core.db.ODatabaseComplex.OPERATION_MODE;
-import com.orientechnologies.orient.core.db.record.ODatabaseRecordTx;
+import com.orientechnologies.orient.core.db.ODatabase.OPERATION_MODE;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.db.record.ORecordOperation;
+import com.orientechnologies.orient.core.exception.ORecordNotFoundException;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.index.OIndex;
+import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.record.ORecord;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.storage.ORecordCallback;
 import com.orientechnologies.orient.core.storage.OStorage;
-import com.orientechnologies.orient.core.version.ORecordVersion;
 
 import java.util.HashMap;
 import java.util.List;
 
 public interface OTransaction {
-  public enum TXTYPE {
+  enum TXTYPE {
     NOTX, OPTIMISTIC, PESSIMISTIC
   }
 
-  public enum TXSTATUS {
+  enum TXSTATUS {
     INVALID, BEGUN, COMMITTING, ROLLBACKING, COMPLETED, ROLLED_BACK
   }
 
-  public void begin();
+  enum ISOLATION_LEVEL {
+    READ_COMMITTED, REPEATABLE_READ
+  }
 
-  public void commit();
+  void begin();
 
-  public void commit(boolean force);
+  void commit();
 
-  public void rollback();
+  void commit(boolean force);
 
-  public void rollback(boolean force, int commitLevelDiff);
+  void rollback();
 
-  public ODatabaseRecordTx getDatabase();
+  /**
+   * Returns the current isolation level.
+   */
+  ISOLATION_LEVEL getIsolationLevel();
 
-  public void clearRecordEntries();
+  /**
+   * Changes the isolation level. Default is READ_COMMITTED. When REPEATABLE_READ is set, any record read from the storage is cached
+   * in memory to guarantee the repeatable reads. This affects the used RAM and speed (because JVM Garbage Collector job).
+   * 
+   * @param iIsolationLevel
+   *          Isolation level to set
+   * @return Current object to allow call in chain
+   */
+  OTransaction setIsolationLevel(ISOLATION_LEVEL iIsolationLevel);
 
-  public ORecord loadRecord(ORID iRid, ORecord iRecord, String iFetchPlan, boolean ignoreCache, boolean loadTombstone,
+  void rollback(boolean force, int commitLevelDiff);
+
+  ODatabaseDocument getDatabase();
+
+  void clearRecordEntries();
+
+  @Deprecated
+  ORecord loadRecord(ORID iRid, ORecord iRecord, String iFetchPlan, boolean ignoreCache, boolean loadTombstone,
       final OStorage.LOCKING_STRATEGY iLockingStrategy);
 
-  public ORecord saveRecord(ORecord iRecord, String iClusterName, OPERATION_MODE iMode, boolean iForceCreate,
-      ORecordCallback<? extends Number> iRecordCreatedCallback, ORecordCallback<ORecordVersion> iRecordUpdatedCallback);
+  @Deprecated
+  ORecord loadRecord(ORID iRid, ORecord iRecord, String iFetchPlan, boolean ignoreCache, boolean iUpdateCache,
+      boolean loadTombstone, final OStorage.LOCKING_STRATEGY iLockingStrategy);
 
-  public void deleteRecord(ORecord iRecord, OPERATION_MODE iMode);
+  ORecord loadRecord(ORID iRid, ORecord iRecord, String iFetchPlan, boolean ignoreCache);
 
-  public int getId();
+  ORecord reloadRecord(ORID iRid, ORecord iRecord, String iFetchPlan, boolean ignoreCache);
 
-  public TXSTATUS getStatus();
+  ORecord reloadRecord(ORID iRid, ORecord iRecord, String iFetchPlan, boolean ignoreCache, boolean force);
 
-  public Iterable<? extends ORecordOperation> getCurrentRecordEntries();
+  ORecord loadRecordIfVersionIsNotLatest(ORID rid, int recordVersion, String fetchPlan, boolean ignoreCache)
+      throws ORecordNotFoundException;
 
-  public Iterable<? extends ORecordOperation> getAllRecordEntries();
+  ORecord saveRecord(ORecord iRecord, String iClusterName, OPERATION_MODE iMode, boolean iForceCreate,
+      ORecordCallback<? extends Number> iRecordCreatedCallback, ORecordCallback<Integer> iRecordUpdatedCallback);
 
-  public List<ORecordOperation> getRecordEntriesByClass(String iClassName);
+  void deleteRecord(ORecord iRecord, OPERATION_MODE iMode);
 
-  public List<ORecordOperation> getNewRecordEntriesByClusterIds(int[] iIds);
+  void recycleRecord(ORecord iRecord);
 
-  public ORecord getRecord(ORID iRid);
+  int getId();
 
-  public ORecordOperation getRecordEntry(ORID rid);
+  TXSTATUS getStatus();
 
-  public List<String> getInvolvedIndexes();
+  @Deprecated
+  Iterable<? extends ORecordOperation> getCurrentRecordEntries();
 
-  public ODocument getIndexChanges();
+  Iterable<? extends ORecordOperation> getAllRecordEntries();
 
-  public void addIndexEntry(OIndex<?> delegate, final String iIndexName, final OTransactionIndexChanges.OPERATION iStatus,
+  List<ORecordOperation> getNewRecordEntriesByClass(OClass iClass, boolean iPolymorphic);
+
+  List<ORecordOperation> getNewRecordEntriesByClusterIds(int[] iIds);
+
+  ORecord getRecord(ORID iRid);
+
+  ORecordOperation getRecordEntry(ORID rid);
+
+  List<String> getInvolvedIndexes();
+
+  ODocument getIndexChanges();
+
+  void addIndexEntry(OIndex<?> delegate, final String iIndexName, final OTransactionIndexChanges.OPERATION iStatus,
       final Object iKey, final OIdentifiable iValue);
 
-  public void clearIndexEntries();
+  @Deprecated
+  void clearIndexEntries();
 
-  public OTransactionIndexChanges getIndexChanges(String iName);
+  OTransactionIndexChanges getIndexChanges(String iName);
 
   /**
    * Tells if the transaction is active.
    * 
    * @return
    */
-  public boolean isActive();
+  boolean isActive();
 
-  public boolean isUsingLog();
+  boolean isUsingLog();
+
+  void setCustomData(String iName, Object iValue);
+
+  Object getCustomData(String iName);
 
   /**
    * If you set this flag to false, you are unable to
@@ -110,9 +152,9 @@ public interface OTransaction {
    * 
    * So you practically unable to work in multithreaded environment and keep data consistent.
    */
-  public void setUsingLog(boolean useLog);
+  void setUsingLog(boolean useLog);
 
-  public void close();
+  void close();
 
   /**
    * When commit in transaction is performed all new records will change their identity, but index values will contain stale links,
@@ -123,17 +165,21 @@ public interface OTransaction {
    * @param newRid
    *          Record identity after commit.
    */
-  public void updateIdentityAfterCommit(final ORID oldRid, final ORID newRid);
+  void updateIdentityAfterCommit(final ORID oldRid, final ORID newRid);
 
-  public int amountOfNestedTxs();
+  int amountOfNestedTxs();
 
-  public OTransaction lockRecord(OIdentifiable iRecord, OStorage.LOCKING_STRATEGY iLockingStrategy);
+  boolean isLockedRecord(OIdentifiable iRecord);
 
-  public OTransaction unlockRecord(OIdentifiable iRecord);
+  OStorage.LOCKING_STRATEGY lockingStrategy(OIdentifiable iRecord);
 
-  public HashMap<ORID, OStorage.LOCKING_STRATEGY> getLockedRecords();
+  OTransaction lockRecord(OIdentifiable iRecord, OStorage.LOCKING_STRATEGY iLockingStrategy);
 
-  public int getEntryCount();
+  OTransaction unlockRecord(OIdentifiable iRecord);
 
-  public boolean hasRecordCreation();
+  HashMap<ORID, OStorage.LOCKING_STRATEGY> getLockedRecords();
+
+  int getEntryCount();
+
+  boolean hasRecordCreation();
 }

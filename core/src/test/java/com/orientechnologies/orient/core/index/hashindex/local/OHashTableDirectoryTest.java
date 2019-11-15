@@ -9,7 +9,7 @@ import org.testng.annotations.*;
 import java.io.IOException;
 
 /**
- * @author Andrey Lomakin <a href="mailto:lomakin.andrey@gmail.com">Andrey Lomakin</a>
+ * @author Andrey Lomakin (a.lomakin-at-orientechnologies.com)
  * @since 5/15/14
  */
 @Test
@@ -35,7 +35,7 @@ public class OHashTableDirectoryTest {
     OMurmurHash3HashFunction<Integer> murmurHash3HashFunction = new OMurmurHash3HashFunction<Integer>();
     murmurHash3HashFunction.setValueSerializer(OIntegerSerializer.INSTANCE);
 
-    directory = new OHashTableDirectory(".tsc", "hashTableDirectoryTest", false,
+    directory = new OHashTableDirectory(".tsc", "hashTableDirectoryTest","hashTableDirectoryTest", false,
         (OAbstractPaginatedStorage) databaseDocumentTx.getStorage());
 
     directory.create();

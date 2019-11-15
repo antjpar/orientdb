@@ -19,37 +19,122 @@
       */
 package com.orientechnologies.orient.server.distributed;
 
-import com.orientechnologies.orient.server.distributed.task.OAbstractRemoteTask;
+import com.orientechnologies.orient.core.id.ORecordId;
+import com.orientechnologies.orient.server.distributed.task.ORemoteTask;
+
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.io.IOException;
 
 /**
-  *
-  * @author Luca Garulli (l.garulli--at--orientechnologies.com)
-  *
-  */
- public interface ODistributedRequest {
-   enum EXECUTION_MODE {
-     RESPONSE, NO_RESPONSE
-   }
+ * @author Luca Garulli (l.garulli--at--orientechnologies.com)
+ */
+public class ODistributedRequest {
+  public enum EXECUTION_MODE {
+    RESPONSE, NO_RESPONSE
+  }
 
-   long getId();
+  private final ODistributedServerManager manager;
 
-   void setId(long iId);
+  private ODistributedRequestId id;
+  private String                databaseName;
+  private long                  senderThreadId;
+  private ORemoteTask           task;
+  private ORecordId             userRID;       // KEEP ALSO THE RID TO AVOID SECURITY PROBLEM ON DELETE & RECREATE USERS
 
-   EXECUTION_MODE getExecutionMode();
+  public ODistributedRequest(final ODistributedServerManager manager) {
+    this.manager = manager;
+  }
 
-   String getDatabaseName();
+  public ODistributedRequest(final ODistributedServerManager manager, final int senderNodeId, final long msgSequence,
+      final String databaseName, final ORemoteTask payload) {
+    this.manager = manager;
+    this.id = new ODistributedRequestId(senderNodeId, msgSequence);
+    this.databaseName = databaseName;
+    this.senderThreadId = Thread.currentThread().getId();
+    this.task = payload;
+  }
 
-   ODistributedRequest setDatabaseName(final String databaseName);
+  public ODistributedRequestId getId() {
+    return id;
+  }
 
-   String getSenderNodeName();
+  public void setId(final ODistributedRequestId reqId) {
+    id = reqId;
+  }
 
-   ODistributedRequest setSenderNodeName(String localNodeName);
+  public String getDatabaseName() {
+    return databaseName;
+  }
 
-   OAbstractRemoteTask getTask();
+  public ODistributedRequest setDatabaseName(final String databaseName) {
+    this.databaseName = databaseName;
+    return this;
+  }
 
-   ODistributedRequest setTask(final OAbstractRemoteTask payload);
+  public ORemoteTask getTask() {
+    return task;
+  }
 
-   String getUserName();
+  public ODistributedRequest setTask(final ORemoteTask payload) {
+    this.task = payload;
+    return this;
+  }
 
-   void setUserName(String userName);
- }
+  public ORecordId getUserRID() {
+    return userRID;
+  }
+
+  public void setUserRID(final ORecordId iUserRID) {
+    this.userRID = iUserRID;
+  }
+
+  public void toStream(final DataOutput out) throws IOException {
+    id.toStream(out);
+    out.writeLong(senderThreadId);
+    out.writeUTF(databaseName != null ? databaseName : "");
+
+    out.writeByte(task.getFactoryId());
+    task.toStream(out);
+
+    if (userRID != null) {
+      out.writeBoolean(true);
+      userRID.toStream(out);
+    } else
+      out.writeBoolean(false);
+  }
+
+  public void fromStream(final DataInput in) throws IOException {
+    id = new ODistributedRequestId();
+    id.fromStream(in);
+    senderThreadId = in.readLong();
+    databaseName = in.readUTF();
+    if (databaseName.isEmpty())
+      databaseName = null;
+
+    final ORemoteTaskFactory taskFactory = manager.getTaskFactoryManager().getFactoryByServerId(id.getNodeId());
+    task = taskFactory.createTask(in.readByte());
+    task.fromStream(in, taskFactory);
+
+    if (in.readBoolean()) {
+      userRID = new ORecordId();
+      userRID.fromStream(in);
+    }
+  }
+
+  @Override
+  public String toString() {
+    final StringBuilder buffer = new StringBuilder(256);
+    buffer.append("id=");
+    buffer.append(id);
+    if (task != null) {
+      buffer.append(" task=");
+      buffer.append(task.toString());
+    }
+    if (userRID != null) {
+      buffer.append(" user=");
+      buffer.append(userRID);
+    }
+    return buffer.toString();
+  }
+}

@@ -31,7 +31,7 @@ import com.orientechnologies.orient.core.index.sbtreebonsai.local.OSBTreeBonsai;
 import com.orientechnologies.orient.core.storage.impl.local.OAbstractPaginatedStorage;
 
 /**
- * @author Andrey Lomakin <a href="mailto:lomakin.andrey@gmail.com">Andrey Lomakin</a>
+ * @author Andrey Lomakin (a.lomakin-at-orientechnologies.com)
  * @since 11/26/13
  */
 public class ORidBagUpdateSerializationOperation implements ORecordSerializationOperation {
@@ -51,6 +51,9 @@ public class ORidBagUpdateSerializationOperation implements ORecordSerialization
 
   @Override
   public void execute(OAbstractPaginatedStorage paginatedStorage) {
+    if (changedValues.isEmpty())
+      return;
+
     OSBTreeBonsai<OIdentifiable, Integer> tree = loadTree();
     try {
       for (Map.Entry<OIdentifiable, OSBTreeRidBag.Change> entry : changedValues.entrySet()) {

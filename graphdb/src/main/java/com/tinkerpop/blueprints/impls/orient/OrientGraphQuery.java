@@ -1,44 +1,37 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 
 package com.tinkerpop.blueprints.impls.orient;
 
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
+import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
-import com.tinkerpop.blueprints.Contains;
-import com.tinkerpop.blueprints.Edge;
-import com.tinkerpop.blueprints.Element;
-import com.tinkerpop.blueprints.Graph;
-import com.tinkerpop.blueprints.Query;
-import com.tinkerpop.blueprints.Vertex;
+import com.orientechnologies.orient.core.tx.OTransaction;
+import com.tinkerpop.blueprints.*;
 import com.tinkerpop.blueprints.util.DefaultGraphQuery;
 
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
-import java.util.Set;
+import java.util.*;
 
 /**
  * OrientDB implementation for Graph query.
- * 
+ *
  * @author Luca Garulli (http://www.orientechnologies.com)
  */
 public class OrientGraphQuery extends DefaultGraphQuery {
@@ -79,14 +72,19 @@ public class OrientGraphQuery extends DefaultGraphQuery {
   public class OrientGraphQueryIterable<T extends Element> extends DefaultGraphQueryIterable<T> {
     public OrientGraphQueryIterable(final boolean forVertex, final String[] labels) {
       super(forVertex);
+
       if (labels != null && labels.length > 0)
         // TREAT CLASS AS LABEL
+
         has("_class", Contains.IN, Arrays.asList(labels));
     }
 
     protected Set<String> getIndexedKeys(final Class<? extends Element> elementClass) {
       return ((OrientBaseGraph) graph).getIndexedKeys(elementClass, true);
     }
+
+
+
   }
 
   protected OrientGraphQuery(final Graph iGraph) {
@@ -95,7 +93,7 @@ public class OrientGraphQuery extends DefaultGraphQuery {
 
   /**
    * (Blueprints Extension) Sets the labels to filter. Labels are bound to Class names by default.
-   * 
+   *
    * @param labels
    *          String vararg of labels
    * @return Current Query Object to allow calls in chain.
@@ -107,7 +105,7 @@ public class OrientGraphQuery extends DefaultGraphQuery {
 
   /**
    * Skips first iSkip items from the result set.
-   * 
+   *
    * @param iSkip
    *          Number of items to skip on result set
    * @return Current Query Object to allow calls in chain.
@@ -120,7 +118,7 @@ public class OrientGraphQuery extends DefaultGraphQuery {
   /**
    * (Blueprints Extension) Sets the order of results by a field in ascending (asc) order. This is translated on ORDER BY in the
    * underlying SQL query.
-   * 
+   *
    * @param props
    *          Field to order by
    * @return Current Query Object to allow calls in chain.
@@ -133,7 +131,7 @@ public class OrientGraphQuery extends DefaultGraphQuery {
   /**
    * (Blueprints Extension) Sets the order of results by a field in ascending (asc) or descending (desc) order based on dir
    * parameter. This is translated on ORDER BY in the underlying SQL query.
-   * 
+   *
    * @param props
    *          Field to order by
    * @param dir
@@ -154,11 +152,13 @@ public class OrientGraphQuery extends DefaultGraphQuery {
     if (limit == 0)
       return Collections.emptyList();
 
-    if (((OrientBaseGraph) graph).getRawGraph().getTransaction().isActive())
+    OTransaction transaction = ((OrientBaseGraph) graph).getRawGraph().getTransaction();
+    if (transaction.isActive() && transaction.getEntryCount() > 0 || hasCustomPredicate()) {
       // INSIDE TRANSACTION QUERY DOESN'T SEE IN MEMORY CHANGES, UNTIL
       // SUPPORTED USED THE BASIC IMPL
-      return new OrientGraphQueryIterable<Vertex>(true, labels);
-
+      String[] classes = allSubClassesLabels();
+      return new OrientGraphQueryIterable<Vertex>(true, classes);
+    }
     final StringBuilder text = new StringBuilder(512);
 
     // GO DIRECTLY AGAINST E CLASS AND SUB-CLASSES
@@ -171,7 +171,8 @@ public class OrientGraphQuery extends DefaultGraphQuery {
         text.append(OrientBaseGraph.encodeClassName(labels[0]));
       else {
         // MULTIPLE CLASSES NOT SUPPORTED DIRECTLY: CREATE A SUB-QUERY
-        return new OrientGraphQueryIterable<Vertex>(true, labels);
+        String[] classes = allSubClassesLabels();
+        return new OrientGraphQueryIterable<Vertex>(true, classes);
       }
     } else
       text.append(OrientVertexType.CLASS_NAME);
@@ -183,7 +184,7 @@ public class OrientGraphQuery extends DefaultGraphQuery {
     if (orderBy.length() > 1) {
       text.append(ORDERBY);
       text.append(orderBy);
-      text.append(" " + orderByDir + " ");
+      text.append(" ").append(orderByDir).append(" ");
     }
     if (skip > 0 && skip < Integer.MAX_VALUE) {
       text.append(SKIP);
@@ -203,8 +204,28 @@ public class OrientGraphQuery extends DefaultGraphQuery {
     return new OrientElementIterable<Vertex>(((OrientBaseGraph) graph), ((OrientBaseGraph) graph).getRawGraph().query(query));
   }
 
+  private String[] allSubClassesLabels() {
+
+    String[] classes = null;
+
+    if (labels != null && labels.length > 0) {
+      List<String> tmpClasses = new ArrayList<String>();
+      for (String label : labels) {
+        OrientVertexType vertexType = ((OrientBaseGraph) graph).getVertexType(label);
+        tmpClasses.add(vertexType.getName());
+        Collection<OClass> allSubclasses = vertexType.getAllSubclasses();
+        for (OClass klass : allSubclasses) {
+          tmpClasses.add(klass.getName());
+        }
+      }
+      classes = tmpClasses.toArray(new String[tmpClasses.size()]);
+    }
+
+    return classes;
+  }
+
   /**
-   * 
+   *
    * Returns the result set of the query as iterable edges.
    */
   @Override
@@ -212,7 +233,7 @@ public class OrientGraphQuery extends DefaultGraphQuery {
     if (limit == 0)
       return Collections.emptyList();
 
-    if (((OrientBaseGraph) graph).getRawGraph().getTransaction().isActive())
+    if (((OrientBaseGraph) graph).getRawGraph().getTransaction().isActive() || hasCustomPredicate())
       // INSIDE TRANSACTION QUERY DOESN'T SEE IN MEMORY CHANGES, UNTIL
       // SUPPORTED USED THE BASIC IMPL
       return new OrientGraphQueryIterable<Edge>(false, labels);
@@ -247,7 +268,7 @@ public class OrientGraphQuery extends DefaultGraphQuery {
       query.setFetchPlan(fetchPlan);
 
     if (limit > 0 && limit < Integer.MAX_VALUE)
-      query.setLimit((int) limit);
+      query.setLimit(limit);
 
     return new OrientElementIterable<Edge>(((OrientBaseGraph) graph), ((OrientBaseGraph) graph).getRawGraph().query(query));
   }
@@ -269,7 +290,7 @@ public class OrientGraphQuery extends DefaultGraphQuery {
   protected void manageLabels(final boolean usedWhere, final StringBuilder text) {
     if (labels != null && labels.length > 0) {
 
-      if( !usedWhere ){
+      if (!usedWhere) {
         // APPEND WHERE
         text.append(QUERY_WHERE);
       } else
@@ -285,6 +306,14 @@ public class OrientGraphQuery extends DefaultGraphQuery {
       }
       text.append(QUERY_LABEL_END);
     }
+  }
+
+  protected boolean hasCustomPredicate() {
+    for (HasContainer has : hasContainers) {
+      if (!(has.predicate instanceof Contains) && !(has.predicate instanceof com.tinkerpop.blueprints.Compare))
+        return true;
+    }
+    return false;
   }
 
   @SuppressWarnings("unchecked")
@@ -304,7 +333,7 @@ public class OrientGraphQuery extends DefaultGraphQuery {
           text.append(OPERATOR_NOT);
           text.append(PARENTHESIS_BEGIN);
         }
-        text.append(has.key);
+        text.append('`').append(has.key).append('`');
 
         if (has.value instanceof String) {
           text.append(OPERATOR_LIKE);
@@ -329,7 +358,7 @@ public class OrientGraphQuery extends DefaultGraphQuery {
           text.append(PARENTHESIS_END);
       } else {
         // ANY OTHER OPERATORS
-        text.append(has.key);
+        text.append('`').append(has.key).append('`');
         text.append(SPACE);
 
         if (has.predicate instanceof com.tinkerpop.blueprints.Compare) {
@@ -384,7 +413,7 @@ public class OrientGraphQuery extends DefaultGraphQuery {
     else if (iValue != null)
       value = iValue.toString().replace("'", "\\'");
     else
-      value = iValue;
+      value = null;
 
     text.append(value);
 

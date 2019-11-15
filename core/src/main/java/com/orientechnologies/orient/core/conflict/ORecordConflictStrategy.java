@@ -21,7 +21,9 @@
 package com.orientechnologies.orient.core.conflict;
 
 import com.orientechnologies.orient.core.id.ORecordId;
-import com.orientechnologies.orient.core.version.ORecordVersion;
+import com.orientechnologies.orient.core.storage.OStorage;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Manages the MVCC conflicts.
@@ -29,7 +31,8 @@ import com.orientechnologies.orient.core.version.ORecordVersion;
  * @author Luca Garulli
  */
 public interface ORecordConflictStrategy {
-  byte[] onUpdate(byte iRecordType, ORecordId rid, ORecordVersion iRecordVersion, byte[] iRecordContent, ORecordVersion iDatabaseVersion);
+  byte[] onUpdate(OStorage storage, byte iRecordType, ORecordId rid, int iRecordVersion, byte[] iRecordContent,
+      AtomicInteger iDatabaseVersion);
 
   String getName();
 }

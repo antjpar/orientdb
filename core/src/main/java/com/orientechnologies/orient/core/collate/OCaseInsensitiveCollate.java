@@ -19,8 +19,9 @@
   */
 package com.orientechnologies.orient.core.collate;
 
-import com.orientechnologies.orient.core.index.OCompositeKey;
 import com.orientechnologies.common.comparator.ODefaultComparator;
+
+import java.util.*;
 
 /**
  * Case insensitive collate.
@@ -37,8 +38,23 @@ public class OCaseInsensitiveCollate extends ODefaultComparator implements OColl
 
   public Object transform(final Object obj) {
     if (obj instanceof String)
-      return ((String) obj).toLowerCase();
+      return ((String) obj).toLowerCase(Locale.ENGLISH);
 
+    if(obj instanceof Set){
+      Set result = new HashSet();
+      for(Object o:(Set)obj){
+        result.add(transform(o));
+      }
+      return result;
+    }
+
+    if(obj instanceof List){
+      List result = new ArrayList();
+      for(Object o:(List)obj){
+        result.add(transform(o));
+      }
+      return result;
+    }
     return obj;
   }
 

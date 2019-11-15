@@ -25,18 +25,8 @@ public class TestOrientBulkInsert {
   }
 
   public TestOrientBulkInsert() throws InterruptedException {
-    // FIXME Eric_08.05.2013
-    // Mit der 1.3 von Orientdb gab es Memory Leak probleme beim inserten der Photos
-    // Mit den folgenden Parametern und dem Aufruf von
-    // this.dbWrapper.setMassiveInserts();
-    // wurde es besser aber immer noch nicht 100%
-    //
-    OGlobalConfiguration.CACHE_LOCAL_ENABLED.setValue(false); // Turn off cache
-
     OGlobalConfiguration.INDEX_AUTO_LAZY_UPDATES.setValue(0); // Turn off cache
     OGlobalConfiguration.INDEX_MANUAL_LAZY_UPDATES.setValue(0);
-
-    OGlobalConfiguration.TX_USE_LOG.setValue(false);
 
     Map defaultsMap = new HashMap<String, Object>();
     defaultsMap.put("mvrbtree.lazyUpdates", 1);
@@ -54,7 +44,7 @@ public class TestOrientBulkInsert {
 
     OSchema schema = database.getMetadata().getSchema();
 
-    OClass cBulk = schema.createClass("classBulk", database.addCluster("cluster_bulk"));
+    OClass cBulk = schema.createClass("classBulk", 1, null);
 
     // Declare some fields
     for (int i = 1; i < 10; i++) {

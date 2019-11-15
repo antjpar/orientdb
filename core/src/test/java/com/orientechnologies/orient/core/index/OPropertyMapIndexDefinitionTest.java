@@ -1,24 +1,18 @@
 package com.orientechnologies.orient.core.index;
 
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
+import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+import com.orientechnologies.orient.core.db.record.OMultiValueChangeEvent;
+import com.orientechnologies.orient.core.metadata.schema.OType;
+import com.orientechnologies.orient.core.record.impl.ODocument;
 import org.testng.Assert;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
-import com.orientechnologies.orient.core.db.record.OMultiValueChangeEvent;
-import com.orientechnologies.orient.core.metadata.schema.OType;
-import com.orientechnologies.orient.core.record.impl.ODocument;
+import java.util.*;
 
 /**
- * @author LomakiA <a href="mailto:lomakin.andrey@gmail.com">Andrey Lomakin</a>
+ * @author LomakiA <a href="mailto:a.lomakin@orientechnologies.com">Andrey Lomakin</a>
  * @since 20.12.11
  */
 @Test
@@ -195,7 +189,8 @@ public class OPropertyMapIndexDefinitionTest {
     final ODatabaseDocumentTx database = new ODatabaseDocumentTx("memory:propertytest");
     database.create();
 
-    propertyIndexByKey = new OPropertyMapIndexDefinition("tesClass", "fOne", OType.STRING, OPropertyMapIndexDefinition.INDEX_BY.KEY);
+    propertyIndexByKey = new OPropertyMapIndexDefinition("tesClass", "fOne", OType.STRING,
+        OPropertyMapIndexDefinition.INDEX_BY.KEY);
 
     final ODocument docToStore = propertyIndexByKey.toStream();
     database.save(docToStore);
@@ -249,13 +244,13 @@ public class OPropertyMapIndexDefinitionTest {
   }
 
   public void testCreateDDLByKey() {
-    final String ddl = propertyIndexByKey.toCreateIndexDDL("testIndex", "unique").toLowerCase();
-    Assert.assertEquals(ddl, "create index testindex on testclass ( fone by key ) unique");
+    final String ddl = propertyIndexByKey.toCreateIndexDDL("testIndex", "unique",null).toLowerCase(Locale.ENGLISH);
+    Assert.assertEquals(ddl, "create index `testindex` on `testclass` ( `fone` by key ) unique");
   }
 
   public void testCreateDDLByValue() {
-    final String ddl = propertyIndexByValue.toCreateIndexDDL("testIndex", "unique").toLowerCase();
-    Assert.assertEquals(ddl, "create index testindex on testclass ( fone by value ) unique");
+    final String ddl = propertyIndexByValue.toCreateIndexDDL("testIndex", "unique",null).toLowerCase(Locale.ENGLISH);
+    Assert.assertEquals(ddl, "create index `testindex` on `testclass` ( `fone` by value ) unique");
   }
 
   public void testProcessChangeEventAddKey() {

@@ -1,43 +1,45 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.metadata.function;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-
+import com.orientechnologies.common.exception.OException;
+import com.orientechnologies.common.util.OCallable;
 import com.orientechnologies.orient.core.command.OCommandManager;
 import com.orientechnologies.orient.core.command.script.OCommandExecutorFunction;
 import com.orientechnologies.orient.core.command.script.OCommandFunction;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
-import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
+import com.orientechnologies.orient.core.metadata.OMetadataInternal;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
+import com.orientechnologies.orient.core.metadata.schema.OProperty;
 import com.orientechnologies.orient.core.metadata.schema.OType;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
+import com.orientechnologies.orient.core.storage.ORecordDuplicatedException;
+
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Manages stored functions.
- * 
+ *
  * @author Luca Garulli
  */
 public class OFunctionLibraryImpl implements OFunctionLibrary {
@@ -55,15 +57,32 @@ public class OFunctionLibraryImpl implements OFunctionLibrary {
   }
 
   public void load() {
+    // COPY CALLBACK IN RAM
+    final Map<String, OCallable<Object, Map<Object, Object>>> callbacks = new HashMap<String, OCallable<Object, Map<Object, Object>>>();
+    for (Map.Entry<String, OFunction> entry : functions.entrySet()) {
+      if (entry.getValue().getCallback() != null)
+        callbacks.put(entry.getKey(), entry.getValue().getCallback());
+    }
+
     functions.clear();
 
     // LOAD ALL THE FUNCTIONS IN MEMORY
-    final ODatabaseRecord db = ODatabaseRecordThreadLocal.INSTANCE.get();
-    if (db.getMetadata().getSchema().existsClass("OFunction")) {
+    final ODatabaseDocument db = ODatabaseRecordThreadLocal.INSTANCE.get();
+    if (((OMetadataInternal) db.getMetadata()).getImmutableSchemaSnapshot().existsClass("OFunction")) {
       List<ODocument> result = db.query(new OSQLSynchQuery<ODocument>("select from OFunction order by name"));
       for (ODocument d : result) {
         d.reload();
-        functions.put(d.field("name").toString().toUpperCase(), new OFunction(d));
+
+        //skip the function records which do not contain real data
+        if (d.fields() == 0)
+          continue;
+
+        final OFunction f = new OFunction(d);
+
+        // RESTORE CALLBACK IF ANY
+        f.setCallback(callbacks.get(f.getName()));
+
+        functions.put(d.field("name").toString().toUpperCase(Locale.ENGLISH), f);
       }
     }
   }
@@ -73,14 +92,19 @@ public class OFunctionLibraryImpl implements OFunctionLibrary {
   }
 
   public OFunction getFunction(final String iName) {
-    return functions.get(iName.toUpperCase());
+    return functions.get(iName.toUpperCase(Locale.ENGLISH));
   }
 
   public synchronized OFunction createFunction(final String iName) {
     init();
 
     final OFunction f = new OFunction().setName(iName);
-    functions.put(iName.toUpperCase(), f);
+    try {
+      f.save();
+    } catch (ORecordDuplicatedException ex) {
+      throw OException.wrapException(new OFunctionDuplicatedException("Function with name '" + iName + "' already exist"), null);
+    }
+    functions.put(iName.toUpperCase(Locale.ENGLISH), f);
 
     return f;
   }
@@ -90,15 +114,39 @@ public class OFunctionLibraryImpl implements OFunctionLibrary {
   }
 
   protected void init() {
-    final ODatabaseRecord db = ODatabaseRecordThreadLocal.INSTANCE.get();
-    if (db.getMetadata().getSchema().existsClass("OFunction"))
+    final ODatabaseDocument db = ODatabaseRecordThreadLocal.INSTANCE.get();
+    if (db.getMetadata().getSchema().existsClass("OFunction")) {
+      final OClass f = db.getMetadata().getSchema().getClass("OFunction");
+      OProperty prop = f.getProperty("name");
+      if (prop.getAllIndexes().isEmpty())
+        prop.createIndex(OClass.INDEX_TYPE.UNIQUE_HASH_INDEX);
       return;
+    }
 
     final OClass f = db.getMetadata().getSchema().createClass("OFunction");
-    f.createProperty("name", OType.STRING);
-    f.createProperty("code", OType.STRING);
-    f.createProperty("language", OType.STRING);
-    f.createProperty("idempotent", OType.BOOLEAN);
-    f.createProperty("parameters", OType.EMBEDDEDLIST, OType.STRING);
+    OProperty prop = f.createProperty("name", OType.STRING, (OType) null, true);
+    prop.set(OProperty.ATTRIBUTES.NOTNULL, true);
+    prop.set(OProperty.ATTRIBUTES.MANDATORY, true);
+    prop.createIndex(OClass.INDEX_TYPE.UNIQUE_HASH_INDEX);
+    f.createProperty("code", OType.STRING, (OType) null, true);
+    f.createProperty("language", OType.STRING, (OType) null, true);
+    f.createProperty("idempotent", OType.BOOLEAN, (OType) null, true);
+    f.createProperty("parameters", OType.EMBEDDEDLIST, OType.STRING, true);
+  }
+
+  @Override
+  public synchronized void dropFunction(OFunction function) {
+    String name = function.getName();
+    ODocument doc = function.getDocument();
+    doc.delete();
+    functions.remove(name.toUpperCase(Locale.ENGLISH));
+  }
+
+  @Override
+  public synchronized void dropFunction(String iName) {
+    OFunction function = getFunction(iName);
+    ODocument doc = function.getDocument();
+    doc.delete();
+    functions.remove(iName.toUpperCase(Locale.ENGLISH));
   }
 }

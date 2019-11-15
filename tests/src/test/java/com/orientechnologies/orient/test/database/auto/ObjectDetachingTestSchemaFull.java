@@ -26,15 +26,15 @@ import java.util.Set;
 import javassist.util.proxy.Proxy;
 
 import org.testng.Assert;
-import org.testng.annotations.*;
+import org.testng.annotations.Optional;
+import org.testng.annotations.Parameters;
+import org.testng.annotations.Test;
 
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.sql.OCommandSQL;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
-import com.orientechnologies.orient.core.version.ORecordVersion;
-import com.orientechnologies.orient.object.db.OObjectDatabasePool;
 import com.orientechnologies.orient.object.db.OObjectDatabaseTx;
 import com.orientechnologies.orient.test.domain.base.EnumTest;
 import com.orientechnologies.orient.test.domain.base.JavaAttachDetachTestClass;
@@ -53,22 +53,6 @@ public class ObjectDetachingTestSchemaFull extends ObjectDBBaseTest {
   @Parameters(value = "url")
   public ObjectDetachingTestSchemaFull(@Optional String url) {
     super(url, "_objectschema");
-  }
-
-  @BeforeMethod
-  @Override
-  public void beforeMethod() throws Exception {
-    database.close();
-    database = OObjectDatabasePool.global().acquire(url, "admin", "admin");
-  }
-
-  @AfterClass
-  @Override
-  public void afterClass() throws Exception {
-    database.close();
-
-    database = createDatabaseInstance(url);
-    super.afterClass();
   }
 
   @Test
@@ -140,14 +124,14 @@ public class ObjectDetachingTestSchemaFull extends ObjectDBBaseTest {
       database.save(c);
 
       // CHECK VERSION
-      Assert.assertTrue(((ORecordVersion) c.getVersion()).getCounter() > 0);
+      Assert.assertTrue(((Integer) c.getVersion()) > 0);
     }
 
     // BROWSE ALL THE OBJECTS
     for (Country c : (List<Country>) database.query(new OSQLSynchQuery<Object>("select from Country where name = 'Austria v1'"))) {
       Assert.assertNotNull(c.getId());
       Assert.assertNotNull(c.getVersion());
-      Assert.assertTrue(((ORecordVersion) c.getVersion()).getCounter() > 0);
+      Assert.assertTrue(((Integer) c.getVersion()) > 0);
     }
   }
 
@@ -208,8 +192,8 @@ public class ObjectDetachingTestSchemaFull extends ObjectDBBaseTest {
     database.rollback();
 
     Assert.assertEquals(database.countClass(Country.class), initCount);
-    Assert.assertTrue(country.getId() == null || ((ORID) country.getId()).isTemporary());
-    Assert.assertNull(country.getVersion());
+    Assert.assertTrue(country.getId() == null || ((ORID) country.getId()).isNew(), "id=" + country.getId());
+    // Assert.assertNull(country.getVersion());
   }
 
   @Test(dependsOnMethods = "testInsertRollback")
@@ -221,22 +205,24 @@ public class ObjectDetachingTestSchemaFull extends ObjectDBBaseTest {
     Assert.assertNotNull(country.getId());
     Assert.assertNotNull(country.getVersion());
 
-    ORecordVersion initVersion = ((ORecordVersion) country.getVersion()).copy();
+    int initVersion = ((Integer) country.getVersion());
 
     database.begin();
     Country loaded = (Country) database.load((ORecordId) country.getId());
     Assert.assertEquals(loaded.getId(), country.getId());
     Assert.assertEquals(loaded.getVersion(), country.getVersion());
-    Assert.assertEquals(database.getRecordByUserObject(loaded, false), database.getRecordByUserObject(country, false));
+    Assert.assertEquals((Object) database.getRecordByUserObject(loaded, false),
+        (Object) database.getRecordByUserObject(country, false));
     String newName = "ShouldBeChanged";
     loaded.setName(newName);
     loaded = (Country) database.save(loaded);
     database.commit();
 
     loaded = (Country) database.load((ORecordId) country.getId());
-    Assert.assertEquals(database.getRecordByUserObject(loaded, false), database.getRecordByUserObject(country, false));
+    Assert.assertEquals((Object) database.getRecordByUserObject(loaded, false),
+        (Object) database.getRecordByUserObject(country, false));
     Assert.assertEquals(loaded.getId(), country.getId());
-    Assert.assertEquals(((ORecordVersion) loaded.getVersion()).getCounter(), initVersion.getCounter() + 1);
+    Assert.assertEquals((int) (Integer) loaded.getVersion(), initVersion + 1);
     Assert.assertEquals(loaded.getName(), newName);
   }
 
@@ -249,13 +235,13 @@ public class ObjectDetachingTestSchemaFull extends ObjectDBBaseTest {
     Assert.assertNotNull(country.getId());
     Assert.assertNotNull(country.getVersion());
 
-    ORecordVersion initVersion = (ORecordVersion) country.getVersion();
+    int initVersion = (Integer) country.getVersion();
 
     database.begin();
     Country loaded = (Country) database.load((ORecordId) country.getId());
     Assert.assertEquals(loaded.getId(), country.getId());
     Assert.assertEquals(loaded.getVersion(), country.getVersion());
-    Assert.assertEquals(database.getRecordByUserObject(loaded, false), database.getRecordByUserObject(country, false));
+    Assert.assertEquals((Object) database.getRecordByUserObject(loaded, false), database.getRecordByUserObject(country, false));
     String newName = "ShouldNotBeChanged";
     loaded.setName(newName);
     loaded = (Country) database.save(loaded);
@@ -263,7 +249,7 @@ public class ObjectDetachingTestSchemaFull extends ObjectDBBaseTest {
 
     loaded = database.load((ORecordId) country.getId());
     Assert.assertNotSame(database.getRecordByUserObject(loaded, false), database.getRecordByUserObject(country, false));
-    Assert.assertEquals(loaded.getVersion(), initVersion);
+    Assert.assertEquals((Integer) loaded.getVersion(), (Integer)initVersion);
     Assert.assertEquals(loaded.getName(), initialCountryName);
   }
 
@@ -313,13 +299,8 @@ public class ObjectDetachingTestSchemaFull extends ObjectDBBaseTest {
     database.close();
 
     database = new OObjectDatabaseTx(url).open("admin", "admin");
-    try {
-      database.delete(profile);
-      database.delete(account);
-
-    } finally {
-      database.close();
-    }
+    database.delete(profile);
+    database.delete(account);
   }
 
   @Test(dependsOnMethods = "clean")
@@ -384,7 +365,7 @@ public class ObjectDetachingTestSchemaFull extends ObjectDBBaseTest {
     ORecordId id = (ORecordId) database.getRecordByUserObject(savedJavaObj, false).getIdentity();
     database.close();
 
-    database = OObjectDatabasePool.global().acquire(url, "admin", "admin");
+    database = new OObjectDatabaseTx(url).open("admin", "admin");
     JavaAttachDetachTestClass loadedJavaObj = (JavaAttachDetachTestClass) database.load(id);
     database.detach(loadedJavaObj);
     Assert.assertEquals(loadedJavaObj.text, "test");
@@ -468,7 +449,7 @@ public class ObjectDetachingTestSchemaFull extends ObjectDBBaseTest {
     ORecordId id = (ORecordId) database.getRecordByUserObject(savedJavaObj, false).getIdentity();
     database.close();
 
-    database = OObjectDatabasePool.global().acquire(url, "admin", "admin");
+    database = new OObjectDatabaseTx(url).open("admin", "admin");
     JavaAttachDetachTestClass loadedJavaObj = (JavaAttachDetachTestClass) database.load(id);
     database.detachAll(loadedJavaObj, false);
     Assert.assertEquals(loadedJavaObj.text, "test");
@@ -556,7 +537,7 @@ public class ObjectDetachingTestSchemaFull extends ObjectDBBaseTest {
     ORecordId id = (ORecordId) database.getRecordByUserObject(savedJavaObj, false).getIdentity();
     database.close();
 
-    database = OObjectDatabasePool.global().acquire(url, "admin", "admin");
+    database = new OObjectDatabaseTx(url).open("admin", "admin");
     JavaAttachDetachTestClass loadedJavaObj = (JavaAttachDetachTestClass) database.load(id);
     loadedJavaObj = database.detach(loadedJavaObj, true);
     Assert.assertTrue(!(loadedJavaObj instanceof Proxy));
@@ -647,7 +628,7 @@ public class ObjectDetachingTestSchemaFull extends ObjectDBBaseTest {
     ORecordId id = (ORecordId) database.getRecordByUserObject(savedJavaObj, false).getIdentity();
     database.close();
 
-    database = OObjectDatabasePool.global().acquire(url, "admin", "admin");
+    database = new OObjectDatabaseTx(url).open("admin", "admin");
     JavaAttachDetachTestClass loadedJavaObj = (JavaAttachDetachTestClass) database.load(id);
     loadedJavaObj = database.detachAll(loadedJavaObj, true);
     Assert.assertTrue(!(loadedJavaObj instanceof Proxy));

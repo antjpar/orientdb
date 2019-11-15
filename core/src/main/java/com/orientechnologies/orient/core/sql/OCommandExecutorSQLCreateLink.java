@@ -1,35 +1,30 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.sql;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
-
+import com.orientechnologies.common.exception.OException;
 import com.orientechnologies.orient.core.command.OCommandRequest;
 import com.orientechnologies.orient.core.command.OCommandRequestText;
+import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
-import com.orientechnologies.orient.core.db.record.ODatabaseRecordInternal;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.db.record.ORecordLazyList;
 import com.orientechnologies.orient.core.db.record.ORecordLazySet;
@@ -44,113 +39,130 @@ import com.orientechnologies.orient.core.record.impl.ODocumentHelper;
 import com.orientechnologies.orient.core.serialization.serializer.OStringSerializerHelper;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+
 /**
  * SQL CREATE LINK command: Transform a JOIN relationship to a physical LINK
- * 
+ *
  * @author Luca Garulli
- * 
  */
 @SuppressWarnings("unchecked")
 public class OCommandExecutorSQLCreateLink extends OCommandExecutorSQLAbstract {
-  public static final String  KEYWORD_CREATE = "CREATE";
-  public static final String  KEYWORD_LINK   = "LINK";
+  public static final  String KEYWORD_CREATE = "CREATE";
+  public static final  String KEYWORD_LINK   = "LINK";
   private static final String KEYWORD_FROM   = "FROM";
   private static final String KEYWORD_TO     = "TO";
   private static final String KEYWORD_TYPE   = "TYPE";
 
-  private String              destClassName;
-  private String              destField;
-  private String              sourceClassName;
-  private String              sourceField;
-  private String              linkName;
-  private OType               linkType;
-  private boolean             inverse        = false;
+  private String destClassName;
+  private String destField;
+  private String sourceClassName;
+  private String sourceField;
+  private String linkName;
+  private OType  linkType;
+  private boolean inverse = false;
 
   public OCommandExecutorSQLCreateLink parse(final OCommandRequest iRequest) {
-    init((OCommandRequestText) iRequest);
+    final OCommandRequestText textRequest = (OCommandRequestText) iRequest;
 
-    StringBuilder word = new StringBuilder();
+    String queryText = textRequest.getText();
+    String originalQuery = queryText;
+    try {
+      queryText = preParse(queryText, iRequest);
+      textRequest.setText(queryText);
 
-    int oldPos = 0;
-    int pos = nextWord(parserText, parserTextUpperCase, oldPos, word, true);
-    if (pos == -1 || !word.toString().equals(KEYWORD_CREATE))
-      throw new OCommandSQLParsingException("Keyword " + KEYWORD_CREATE + " not found. Use " + getSyntax(), parserText, oldPos);
+      init((OCommandRequestText) iRequest);
 
-    oldPos = pos;
-    pos = nextWord(parserText, parserTextUpperCase, oldPos, word, true);
-    if (pos == -1 || !word.toString().equals(KEYWORD_LINK))
-      throw new OCommandSQLParsingException("Keyword " + KEYWORD_LINK + " not found. Use " + getSyntax(), parserText, oldPos);
+      StringBuilder word = new StringBuilder();
 
-    oldPos = pos;
-    pos = nextWord(parserText, parserTextUpperCase, oldPos, word, false);
-    if (pos == -1)
-      throw new OCommandSQLParsingException("Keyword " + KEYWORD_FROM + " not found. Use " + getSyntax(), parserText, oldPos);
-
-    if (!word.toString().equalsIgnoreCase(KEYWORD_FROM)) {
-      // GET THE LINK NAME
-      linkName = word.toString();
-
-      if (OStringSerializerHelper.contains(linkName, ' '))
-        throw new OCommandSQLParsingException("Link name '" + linkName + "' contains not valid characters", parserText, oldPos);
+      int oldPos = 0;
+      int pos = nextWord(parserText, parserTextUpperCase, oldPos, word, true);
+      if (pos == -1 || !word.toString().equals(KEYWORD_CREATE))
+        throw new OCommandSQLParsingException("Keyword " + KEYWORD_CREATE + " not found. Use " + getSyntax(), parserText, oldPos);
 
       oldPos = pos;
       pos = nextWord(parserText, parserTextUpperCase, oldPos, word, true);
-    }
+      if (pos == -1 || !word.toString().equals(KEYWORD_LINK))
+        throw new OCommandSQLParsingException("Keyword " + KEYWORD_LINK + " not found. Use " + getSyntax(), parserText, oldPos);
 
-    if (word.toString().equalsIgnoreCase(KEYWORD_TYPE)) {
       oldPos = pos;
-      pos = nextWord(parserText, parserTextUpperCase, pos, word, true);
-
+      pos = nextWord(parserText, parserTextUpperCase, oldPos, word, false);
       if (pos == -1)
-        throw new OCommandSQLParsingException("Link type missed. Use " + getSyntax(), parserText, oldPos);
+        throw new OCommandSQLParsingException("Keyword " + KEYWORD_FROM + " not found. Use " + getSyntax(), parserText, oldPos);
 
-      linkType = OType.valueOf(word.toString().toUpperCase(Locale.ENGLISH));
+      if (!word.toString().equalsIgnoreCase(KEYWORD_FROM)) {
+        // GET THE LINK NAME
+        linkName = word.toString();
 
-      oldPos = pos;
+        if (OStringSerializerHelper.contains(linkName, ' '))
+          throw new OCommandSQLParsingException("Link name '" + linkName + "' contains not valid characters", parserText, oldPos);
+
+        oldPos = pos;
+        pos = nextWord(parserText, parserTextUpperCase, oldPos, word, true);
+      }
+
+      if (word.toString().equalsIgnoreCase(KEYWORD_TYPE)) {
+        oldPos = pos;
+        pos = nextWord(parserText, parserTextUpperCase, pos, word, true);
+
+        if (pos == -1)
+          throw new OCommandSQLParsingException("Link type missed. Use " + getSyntax(), parserText, oldPos);
+
+        linkType = OType.valueOf(word.toString().toUpperCase(Locale.ENGLISH));
+
+        oldPos = pos;
+        pos = nextWord(parserText, parserTextUpperCase, pos, word, true);
+      }
+
+      if (pos == -1 || !word.toString().equals(KEYWORD_FROM))
+        throw new OCommandSQLParsingException("Keyword " + KEYWORD_FROM + " not found. Use " + getSyntax(), parserText, oldPos);
+
+      pos = nextWord(parserText, parserTextUpperCase, pos, word, false);
+      if (pos == -1)
+        throw new OCommandSQLParsingException("Expected <class>.<property>. Use " + getSyntax(), parserText, pos);
+
+      String[] parts = word.toString().split("\\.");
+      if (parts.length != 2)
+        throw new OCommandSQLParsingException("Expected <class>.<property>. Use " + getSyntax(), parserText, pos);
+
+      sourceClassName = parts[0];
+      if (sourceClassName == null)
+        throw new OCommandSQLParsingException("Class not found", parserText, pos);
+      sourceField = parts[1];
+
       pos = nextWord(parserText, parserTextUpperCase, pos, word, true);
+      if (pos == -1 || !word.toString().equals(KEYWORD_TO))
+        throw new OCommandSQLParsingException("Keyword " + KEYWORD_TO + " not found. Use " + getSyntax(), parserText, oldPos);
+
+      pos = nextWord(parserText, parserTextUpperCase, pos, word, false);
+      if (pos == -1)
+        throw new OCommandSQLParsingException("Expected <class>.<property>. Use " + getSyntax(), parserText, pos);
+
+      parts = word.toString().split("\\.");
+      if (parts.length != 2)
+        throw new OCommandSQLParsingException("Expected <class>.<property>. Use " + getSyntax(), parserText, pos);
+
+      destClassName = parts[0];
+      if (destClassName == null)
+        throw new OCommandSQLParsingException("Class not found", parserText, pos);
+      destField = parts[1];
+
+      pos = nextWord(parserText, parserTextUpperCase, pos, word, true);
+      if (pos == -1)
+        return this;
+
+      if (!word.toString().equalsIgnoreCase("INVERSE"))
+        throw new OCommandSQLParsingException("Missed 'INVERSE'. Use " + getSyntax(), parserText, pos);
+
+      inverse = true;
+    } finally {
+      textRequest.setText(originalQuery);
     }
-
-    if (pos == -1 || !word.toString().equals(KEYWORD_FROM))
-      throw new OCommandSQLParsingException("Keyword " + KEYWORD_FROM + " not found. Use " + getSyntax(), parserText, oldPos);
-
-    pos = nextWord(parserText, parserTextUpperCase, pos, word, false);
-    if (pos == -1)
-      throw new OCommandSQLParsingException("Expected <class>.<property>. Use " + getSyntax(), parserText, pos);
-
-    String[] parts = word.toString().split("\\.");
-    if (parts.length != 2)
-      throw new OCommandSQLParsingException("Expected <class>.<property>. Use " + getSyntax(), parserText, pos);
-
-    sourceClassName = parts[0];
-    if (sourceClassName == null)
-      throw new OCommandSQLParsingException("Class not found", parserText, pos);
-    sourceField = parts[1];
-
-    pos = nextWord(parserText, parserTextUpperCase, pos, word, true);
-    if (pos == -1 || !word.toString().equals(KEYWORD_TO))
-      throw new OCommandSQLParsingException("Keyword " + KEYWORD_TO + " not found. Use " + getSyntax(), parserText, oldPos);
-
-    pos = nextWord(parserText, parserTextUpperCase, pos, word, false);
-    if (pos == -1)
-      throw new OCommandSQLParsingException("Expected <class>.<property>. Use " + getSyntax(), parserText, pos);
-
-    parts = word.toString().split("\\.");
-    if (parts.length != 2)
-      throw new OCommandSQLParsingException("Expected <class>.<property>. Use " + getSyntax(), parserText, pos);
-
-    destClassName = parts[0];
-    if (destClassName == null)
-      throw new OCommandSQLParsingException("Class not found", parserText, pos);
-    destField = parts[1];
-
-    pos = nextWord(parserText, parserTextUpperCase, pos, word, true);
-    if (pos == -1)
-      return this;
-
-    if (!word.toString().equalsIgnoreCase("INVERSE"))
-      throw new OCommandSQLParsingException("Missed 'INVERSE'. Use " + getSyntax(), parserText, pos);
-
-    inverse = true;
 
     return this;
   }
@@ -162,12 +174,12 @@ public class OCommandExecutorSQLCreateLink extends OCommandExecutorSQLAbstract {
     if (destField == null)
       throw new OCommandExecutionException("Cannot execute the command because it has not been parsed yet");
 
-    final ODatabaseRecordInternal database = getDatabase();
-    if (!(database.getDatabaseOwner() instanceof ODatabaseDocumentTx))
+    final ODatabaseDocumentInternal database = getDatabase();
+    if (!(database.getDatabaseOwner() instanceof ODatabaseDocument))
       throw new OCommandSQLParsingException("This command supports only the database type ODatabaseDocumentTx and type '"
           + database.getClass() + "' was found");
 
-    final ODatabaseDocumentTx db = (ODatabaseDocumentTx) database.getDatabaseOwner();
+    final ODatabaseDocument db = (ODatabaseDocument) database.getDatabaseOwner();
 
     final OClass sourceClass = database.getMetadata().getSchema().getClass(sourceClassName);
     if (sourceClass == null)
@@ -227,7 +239,7 @@ public class OCommandExecutorSQLCreateLink extends OCommandExecutorSQLAbstract {
               else
                 value = "'" + value + "'";
 
-            result = database.<OCommandRequest> command(new OSQLSynchQuery<ODocument>(cmd + value)).execute();
+            result = database.<OCommandRequest>command(new OSQLSynchQuery<ODocument>(cmd + value)).execute();
 
             if (result == null || result.size() == 0)
               value = null;
@@ -323,7 +335,7 @@ public class OCommandExecutorSQLCreateLink extends OCommandExecutorSQLAbstract {
       if (progressListener != null)
         progressListener.onCompletition(this, false);
 
-      throw new OCommandExecutionException("Error on creation of links", e);
+      throw OException.wrapException(new OCommandExecutionException("Error on creation of links"), e);
 
     } finally {
       database.declareIntent(null);

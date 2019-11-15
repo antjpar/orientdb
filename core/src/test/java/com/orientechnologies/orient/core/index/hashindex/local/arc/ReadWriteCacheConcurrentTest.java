@@ -1,51 +1,56 @@
 package com.orientechnologies.orient.core.index.hashindex.local.arc;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.*;
-
-import com.orientechnologies.orient.core.index.hashindex.local.cache.OWOWCache;
+import com.orientechnologies.common.collection.closabledictionary.OClosableLinkedContainer;
+import com.orientechnologies.common.directmemory.OByteBufferPool;
+import com.orientechnologies.common.serialization.types.OIntegerSerializer;
+import com.orientechnologies.common.serialization.types.OLongSerializer;
+import com.orientechnologies.orient.core.Orient;
+import com.orientechnologies.orient.core.config.OGlobalConfiguration;
+import com.orientechnologies.orient.core.storage.cache.OCacheEntry;
+import com.orientechnologies.orient.core.storage.cache.OCachePointer;
+import com.orientechnologies.orient.core.storage.cache.local.OWOWCache;
+import com.orientechnologies.orient.core.storage.cache.local.twoq.O2QCache;
+import com.orientechnologies.orient.core.storage.fs.OFileClassic;
+import com.orientechnologies.orient.core.storage.impl.local.paginated.OLocalPaginatedStorage;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import com.orientechnologies.common.serialization.types.OIntegerSerializer;
-import com.orientechnologies.common.serialization.types.OLongSerializer;
-import com.orientechnologies.orient.core.Orient;
-import com.orientechnologies.orient.core.config.OGlobalConfiguration;
-import com.orientechnologies.orient.core.index.hashindex.local.cache.OCacheEntry;
-import com.orientechnologies.orient.core.index.hashindex.local.cache.OCachePointer;
-import com.orientechnologies.orient.core.index.hashindex.local.cache.OReadWriteDiskCache;
-import com.orientechnologies.orient.core.storage.fs.OFileClassic;
-import com.orientechnologies.orient.core.storage.impl.local.paginated.OLocalPaginatedStorage;
+import java.io.File;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
 
 /**
  * @author Artem Loginov
  */
 @Test
 public class ReadWriteCacheConcurrentTest {
-  private final int                                  systemOffset    = 2 * (OIntegerSerializer.INT_SIZE + OLongSerializer.LONG_SIZE);
+  private final int systemOffset = 2 * (OIntegerSerializer.INT_SIZE + OLongSerializer.LONG_SIZE);
 
-  private static final int                           THREAD_COUNT    = 4;
-  private static final int                           PAGE_COUNT      = 20;
-  private static final int                           FILE_COUNT      = 8;
-  private OReadWriteDiskCache                        buffer;
-  private OLocalPaginatedStorage                     storageLocal;
+  private static final int THREAD_COUNT = 4;
+  private static final int PAGE_COUNT   = 20;
+  private static final int FILE_COUNT   = 8;
+  private O2QCache  readBuffer;
+  private OWOWCache writeBuffer;
+  private OClosableLinkedContainer<Long, OFileClassic> files = new OClosableLinkedContainer<Long, OFileClassic>(1024);
 
-  private String[]                                   fileNames;
-  private byte                                       seed;
+  private OLocalPaginatedStorage storageLocal;
+
+  private String[] fileNames;
+  private byte     seed;
   private final ExecutorService                      executorService = Executors.newFixedThreadPool(THREAD_COUNT);
   private final List<Future<Void>>                   futures         = new ArrayList<Future<Void>>(THREAD_COUNT);
-  private AtomicLongArray                            fileIds         = new AtomicLongArray(FILE_COUNT);
-  private AtomicIntegerArray                         pageCounters    = new AtomicIntegerArray(FILE_COUNT);
+  private       AtomicLongArray                      fileIds         = new AtomicLongArray(FILE_COUNT);
+  private       AtomicIntegerArray                   pageCounters    = new AtomicIntegerArray(FILE_COUNT);
   private final AtomicReferenceArray<Queue<Integer>> pagesQueue      = new AtomicReferenceArray<Queue<Integer>>(FILE_COUNT);
 
-  private AtomicBoolean                              continuousWrite = new AtomicBoolean(true);
-  private AtomicInteger                              version         = new AtomicInteger(1);
+  private AtomicBoolean continuousWrite = new AtomicBoolean(true);
+  private AtomicInteger version         = new AtomicInteger(1);
 
   @BeforeClass
   public void beforeClass() throws IOException {
@@ -56,9 +61,9 @@ public class ReadWriteCacheConcurrentTest {
     if (buildDirectory == null)
       buildDirectory = ".";
 
-    storageLocal = (OLocalPaginatedStorage) Orient.instance().loadStorage(
-        "plocal:" + buildDirectory + "/ReadWriteCacheConcurrentTest");
-		storageLocal.create(null);
+    storageLocal = (OLocalPaginatedStorage) Orient.instance()
+        .loadStorage("plocal:" + buildDirectory + "/ReadWriteCacheConcurrentTest");
+    storageLocal.create(null);
 
     prepareFilesForTest(FILE_COUNT);
 
@@ -73,8 +78,13 @@ public class ReadWriteCacheConcurrentTest {
 
   @BeforeMethod
   public void beforeMethod() throws IOException {
-    if (buffer != null) {
-      buffer.close();
+    if (writeBuffer != null && readBuffer != null)
+      readBuffer.closeStorage(writeBuffer);
+    else if (writeBuffer != null)
+      writeBuffer.close();
+
+    if (readBuffer != null) {
+      readBuffer.clear();
 
       deleteUsedFiles(FILE_COUNT);
     }
@@ -86,18 +96,20 @@ public class ReadWriteCacheConcurrentTest {
   }
 
   private void initBuffer() throws IOException {
-    buffer = new OReadWriteDiskCache(4 * (8 + systemOffset + 2 * OWOWCache.PAGE_PADDING), 15000 * (8 + systemOffset + 2 * OWOWCache.PAGE_PADDING),
-						8 + systemOffset, 10000, -1, storageLocal,
-        null, true, false);
+    writeBuffer = new OWOWCache(false, 8 + systemOffset, new OByteBufferPool(8 + systemOffset), 10000, null, -1,
+        15000 * (8 + systemOffset), 4 * (8 + systemOffset) + 15000 * (8 + systemOffset), storageLocal, true, files, 1);
+    writeBuffer.loadRegisteredFiles();
+    readBuffer = new O2QCache(4 * (8 + systemOffset), 8 + systemOffset, true, 20);
   }
 
   @AfterClass
   public void afterClass() throws IOException {
-    buffer.close();
+    readBuffer.closeStorage(writeBuffer);
+    readBuffer.clear();
 
     deleteUsedFiles(FILE_COUNT);
 
-		storageLocal.delete();
+    storageLocal.delete();
   }
 
   private void deleteUsedFiles(int filesCount) {
@@ -122,7 +134,7 @@ public class ReadWriteCacheConcurrentTest {
 
     executeConcurrentRandomReadAndWriteOperations();
 
-    buffer.flushBuffer();
+    writeBuffer.flush();
 
     validateFilesContent(version.byteValue());
   }
@@ -164,12 +176,12 @@ public class ReadWriteCacheConcurrentTest {
 
     futures.clear();
 
-    buffer.flushBuffer();
+    writeBuffer.flush();
   }
 
   private void getIdentitiesOfFiles() throws IOException {
     for (int i = 0; i < fileIds.length(); i++) {
-      fileIds.set(i, buffer.openFile(fileNames[i]));
+      fileIds.set(i, readBuffer.addFile(fileNames[i], writeBuffer));
     }
   }
 
@@ -182,8 +194,7 @@ public class ReadWriteCacheConcurrentTest {
   private void validateFileContent(byte version, int k) throws IOException {
     String path = storageLocal.getConfiguration().getDirectory() + "/readWriteCacheTest" + k + ".tst";
 
-    OFileClassic fileClassic = new OFileClassic();
-    fileClassic.init(path, "r");
+    OFileClassic fileClassic = new OFileClassic(path, "r");
     fileClassic.open();
 
     for (int i = 0; i < PAGE_COUNT; i++) {
@@ -210,16 +221,32 @@ public class ReadWriteCacheConcurrentTest {
     }
 
     private void writeToFile(int fileNumber, long pageIndex) throws IOException {
-      OCacheEntry cacheEntry = buffer.load(fileIds.get(fileNumber), pageIndex, false);
+      OCacheEntry cacheEntry = readBuffer.load(fileIds.get(fileNumber), pageIndex, false, writeBuffer, 1, true);
+      if (cacheEntry == null) {
+        do {
+          if (cacheEntry != null)
+            readBuffer.release(cacheEntry, writeBuffer);
+
+          cacheEntry = readBuffer.allocateNewPage(fileIds.get(fileNumber), writeBuffer, true);
+        } while (cacheEntry.getPageIndex() < pageIndex);
+      }
+
+      if (cacheEntry.getPageIndex() > pageIndex) {
+        readBuffer.release(cacheEntry, writeBuffer);
+        cacheEntry = readBuffer.load(fileIds.get(fileNumber), pageIndex, false, writeBuffer, 1, true);
+      }
+
       OCachePointer pointer = cacheEntry.getCachePointer();
 
       pointer.acquireExclusiveLock();
+
+      final ByteBuffer buffer = pointer.getSharedBuffer();
+      buffer.position(systemOffset);
+      buffer.put(new byte[] { version.byteValue(), 2, 3, seed, 5, 6, (byte) fileNumber, (byte) (pageIndex & 0xFF) });
       cacheEntry.markDirty();
 
-      pointer.getDataPointer().set(systemOffset + OWOWCache.PAGE_PADDING,
-          new byte[] { version.byteValue(), 2, 3, seed, 5, 6, (byte) fileNumber, (byte) (pageIndex & 0xFF) }, 0, 8);
       pointer.releaseExclusiveLock();
-      buffer.release(cacheEntry);
+      readBuffer.release(cacheEntry, writeBuffer);
     }
 
     private long getNextPageIndex(int fileNumber) {
@@ -265,12 +292,15 @@ public class ReadWriteCacheConcurrentTest {
       long pageIndex = Math.abs(new Random().nextInt() % PAGE_COUNT);
       int fileNumber = new Random().nextInt(FILE_COUNT);
 
-      OCacheEntry cacheEntry = buffer.load(fileIds.get(fileNumber), pageIndex, false);
+      OCacheEntry cacheEntry = readBuffer.load(fileIds.get(fileNumber), pageIndex, false, writeBuffer, 1, true);
       OCachePointer pointer = cacheEntry.getCachePointer();
 
-      byte[] content = pointer.getDataPointer().get(systemOffset + OWOWCache.PAGE_PADDING, 8);
+      final ByteBuffer buffer = pointer.getSharedBuffer();
+      buffer.position(systemOffset);
+      byte[] content = new byte[8];
+      buffer.get(content);
 
-      buffer.release(cacheEntry);
+      readBuffer.release(cacheEntry, writeBuffer);
 
       Assert.assertTrue(content[0] == 1 || content[0] == 2);
       Assert.assertEquals(content, new byte[] { content[0], 2, 3, seed, 5, 6, (byte) fileNumber, (byte) (pageIndex & 0xFF) });

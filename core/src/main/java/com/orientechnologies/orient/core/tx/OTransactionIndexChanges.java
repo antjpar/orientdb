@@ -19,30 +19,33 @@
   */
 package com.orientechnologies.orient.core.tx;
 
-import java.util.Collection;
+import com.orientechnologies.common.comparator.ODefaultComparator;
+import com.orientechnologies.orient.core.index.OIndex;
+import com.orientechnologies.orient.core.index.OIndexInternal;
+import com.orientechnologies.orient.core.index.OIndexManager;
+
 import java.util.NavigableMap;
 import java.util.TreeMap;
 
-import com.orientechnologies.common.comparator.ODefaultComparator;
-
 /**
  * Collects the changes to an index for a certain key
- * 
+ *
  * @author Luca Garulli (l.garulli--at--orientechnologies.com)
- * 
  */
 public class OTransactionIndexChanges {
 
-  public static enum OPERATION {
+  public enum OPERATION {
     PUT, REMOVE, CLEAR
   }
 
-  public NavigableMap<Object, OTransactionIndexChangesPerKey> changesPerKey  = new TreeMap<Object, OTransactionIndexChangesPerKey>(
-                                                                                 ODefaultComparator.INSTANCE);
+  public NavigableMap<Object, OTransactionIndexChangesPerKey> changesPerKey = new TreeMap<Object, OTransactionIndexChangesPerKey>(
+      ODefaultComparator.INSTANCE);
 
-  public OTransactionIndexChangesPerKey                       nullKeyChanges = new OTransactionIndexChangesPerKey(null);
+  public OTransactionIndexChangesPerKey nullKeyChanges = new OTransactionIndexChangesPerKey(null);
 
-  public boolean                                              cleared        = false;
+  public boolean cleared = false;
+
+  private OIndexInternal<?> resolvedIndex = null;
 
   public OTransactionIndexChangesPerKey getChangesPerKey(final Object key) {
     if (key == null)
@@ -59,7 +62,7 @@ public class OTransactionIndexChanges {
 
   public void setCleared() {
     changesPerKey.clear();
-    nullKeyChanges.entries.clear();
+    nullKeyChanges.clear();
 
     cleared = true;
   }
@@ -86,5 +89,19 @@ public class OTransactionIndexChanges {
 
   public Object getFloorKey(Object key) {
     return changesPerKey.floorKey(key);
+  }
+
+  public OIndexInternal<?> resolveAssociatedIndex(String indexName, OIndexManager indexManager) {
+    if (resolvedIndex == null) {
+      final OIndex<?> index = indexManager.getIndex(indexName);
+      if (index != null)
+        resolvedIndex = index.getInternal();
+    }
+
+    return resolvedIndex;
+  }
+
+  public OIndexInternal<?> getAssociatedIndex() {
+    return resolvedIndex;
   }
 }

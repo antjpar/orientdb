@@ -1,35 +1,26 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.index;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
 import com.orientechnologies.common.comparator.ODefaultComparator;
-import com.orientechnologies.orient.core.db.record.ODatabaseRecordInternal;
+import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.iterator.OEmptyIterator;
 import com.orientechnologies.orient.core.tx.OTransactionIndexChanges;
@@ -37,23 +28,49 @@ import com.orientechnologies.orient.core.tx.OTransactionIndexChanges.OPERATION;
 import com.orientechnologies.orient.core.tx.OTransactionIndexChangesPerKey;
 import com.orientechnologies.orient.core.tx.OTransactionIndexChangesPerKey.OTransactionIndexEntry;
 
+import java.util.*;
+
 /**
  * Transactional wrapper for indexes. Stores changes locally to the transaction until tx.commit(). All the other operations are
  * delegated to the wrapped OIndex instance.
- * 
+ *
  * @author Luca Garulli
- * 
  */
 public class OIndexTxAwareMultiValue extends OIndexTxAware<Set<OIdentifiable>> {
+  private static class MapEntry implements Map.Entry<Object, OIdentifiable> {
+    private final Object        key;
+    private final OIdentifiable backendValue;
+
+    public MapEntry(Object key, OIdentifiable backendValue) {
+      this.key = key;
+      this.backendValue = backendValue;
+    }
+
+    @Override
+    public Object getKey() {
+      return key;
+    }
+
+    @Override
+    public OIdentifiable getValue() {
+      return backendValue;
+    }
+
+    @Override
+    public OIdentifiable setValue(OIdentifiable value) {
+      throw new UnsupportedOperationException("setValue");
+    }
+  }
+
   private class PureTxBetweenIndexForwardCursor extends OIndexAbstractCursor {
     private final OTransactionIndexChanges indexChanges;
-    private Object                         firstKey;
-    private Object                         lastKey;
+    private       Object                   firstKey;
+    private       Object                   lastKey;
 
-    private Object                         nextKey;
+    private Object nextKey;
 
-    private Iterator<OIdentifiable>        valuesIterator = new OEmptyIterator<OIdentifiable>();
-    private Object                         key;
+    private Iterator<OIdentifiable> valuesIterator = new OEmptyIterator<OIdentifiable>();
+    private Object key;
 
     public PureTxBetweenIndexForwardCursor(Object fromKey, boolean fromInclusive, Object toKey, boolean toInclusive,
         OTransactionIndexChanges indexChanges) {
@@ -62,12 +79,12 @@ public class OIndexTxAwareMultiValue extends OIndexTxAware<Set<OIdentifiable>> {
       fromKey = enhanceFromCompositeKeyBetweenAsc(fromKey, fromInclusive);
       toKey = enhanceToCompositeKeyBetweenAsc(toKey, toInclusive);
 
-      if (toInclusive)
+      if (fromInclusive)
         firstKey = indexChanges.getCeilingKey(fromKey);
       else
         firstKey = indexChanges.getHigherKey(fromKey);
 
-      if (fromInclusive)
+      if (toInclusive)
         lastKey = indexChanges.getFloorKey(toKey);
       else
         lastKey = indexChanges.getLowerKey(toKey);
@@ -124,13 +141,13 @@ public class OIndexTxAwareMultiValue extends OIndexTxAware<Set<OIdentifiable>> {
 
   private class PureTxBetweenIndexBackwardCursor extends OIndexAbstractCursor {
     private final OTransactionIndexChanges indexChanges;
-    private Object                         firstKey;
-    private Object                         lastKey;
+    private       Object                   firstKey;
+    private       Object                   lastKey;
 
-    private Object                         nextKey;
+    private Object nextKey;
 
-    private Iterator<OIdentifiable>        valuesIterator = new OEmptyIterator<OIdentifiable>();
-    private Object                         key;
+    private Iterator<OIdentifiable> valuesIterator = new OEmptyIterator<OIdentifiable>();
+    private Object key;
 
     public PureTxBetweenIndexBackwardCursor(Object fromKey, boolean fromInclusive, Object toKey, boolean toInclusive,
         OTransactionIndexChanges indexChanges) {
@@ -139,12 +156,12 @@ public class OIndexTxAwareMultiValue extends OIndexTxAware<Set<OIdentifiable>> {
       fromKey = enhanceFromCompositeKeyBetweenDesc(fromKey, fromInclusive);
       toKey = enhanceToCompositeKeyBetweenDesc(toKey, toInclusive);
 
-      if (toInclusive)
+      if (fromInclusive)
         firstKey = indexChanges.getCeilingKey(fromKey);
       else
         firstKey = indexChanges.getHigherKey(fromKey);
 
-      if (fromInclusive)
+      if (toInclusive)
         lastKey = indexChanges.getFloorKey(toKey);
       else
         lastKey = indexChanges.getLowerKey(toKey);
@@ -201,17 +218,18 @@ public class OIndexTxAwareMultiValue extends OIndexTxAware<Set<OIdentifiable>> {
 
   private class OIndexTxCursor extends OIndexAbstractCursor {
 
-    private final OIndexCursor               backedCursor;
-    private final boolean                    ascOrder;
-    private final OTransactionIndexChanges   indexChanges;
-    private OIndexCursor                     txBetweenIndexCursor;
+    private final OIndexCursor             backedCursor;
+    private final boolean                  ascOrder;
+    private final OTransactionIndexChanges indexChanges;
+    private       OIndexCursor             txBetweenIndexCursor;
 
     private Map.Entry<Object, OIdentifiable> nextTxEntry;
     private Map.Entry<Object, OIdentifiable> nextBackedEntry;
 
-    private boolean                          firstTime;
+    private boolean firstTime;
 
-    public OIndexTxCursor(OIndexCursor txCursor, OIndexCursor backedCursor, boolean ascOrder, OTransactionIndexChanges indexChanges) {
+    public OIndexTxCursor(OIndexCursor txCursor, OIndexCursor backedCursor, boolean ascOrder,
+        OTransactionIndexChanges indexChanges) {
       this.backedCursor = backedCursor;
       this.ascOrder = ascOrder;
       this.indexChanges = indexChanges;
@@ -268,15 +286,17 @@ public class OIndexTxAwareMultiValue extends OIndexTxAware<Set<OIdentifiable>> {
     }
   }
 
-  public OIndexTxAwareMultiValue(final ODatabaseRecordInternal database, final OIndex<Set<OIdentifiable>> delegate) {
+  public OIndexTxAwareMultiValue(final ODatabaseDocumentInternal database, final OIndex<Set<OIdentifiable>> delegate) {
     super(database, delegate);
   }
 
   @Override
-  public Set<OIdentifiable> get(final Object key) {
+  public Set<OIdentifiable> get(Object key) {
     final OTransactionIndexChanges indexChanges = database.getTransaction().getIndexChanges(delegate.getName());
     if (indexChanges == null)
       return super.get(key);
+
+    key = getCollatingValue(key);
 
     final Set<OIdentifiable> result = new HashSet<OIdentifiable>();
     if (!indexChanges.cleared) {
@@ -306,16 +326,20 @@ public class OIndexTxAwareMultiValue extends OIndexTxAware<Set<OIdentifiable>> {
 
   @Override
   public boolean contains(final Object key) {
-    return get(key) != null;
+    final Set<OIdentifiable> result = get(key);
+    return result != null && !result.isEmpty();
   }
 
   @Override
-  public OIndexCursor iterateEntriesBetween(final Object fromKey, final boolean fromInclusive, final Object toKey,
-      final boolean toInclusive, final boolean ascOrder) {
+  public OIndexCursor iterateEntriesBetween(Object fromKey, final boolean fromInclusive, Object toKey, final boolean toInclusive,
+      final boolean ascOrder) {
 
     final OTransactionIndexChanges indexChanges = database.getTransaction().getIndexChanges(delegate.getName());
     if (indexChanges == null)
       return super.iterateEntriesBetween(fromKey, fromInclusive, toKey, toInclusive, ascOrder);
+
+    fromKey = getCollatingValue(fromKey);
+    toKey = getCollatingValue(toKey);
 
     final OIndexCursor txCursor;
     if (ascOrder)
@@ -336,6 +360,8 @@ public class OIndexTxAwareMultiValue extends OIndexTxAware<Set<OIdentifiable>> {
     final OTransactionIndexChanges indexChanges = database.getTransaction().getIndexChanges(delegate.getName());
     if (indexChanges == null)
       return super.iterateEntriesMajor(fromKey, fromInclusive, ascOrder);
+
+    fromKey = getCollatingValue(fromKey);
 
     final OIndexCursor txCursor;
 
@@ -359,6 +385,8 @@ public class OIndexTxAwareMultiValue extends OIndexTxAware<Set<OIdentifiable>> {
     if (indexChanges == null)
       return super.iterateEntriesMinor(toKey, toInclusive, ascOrder);
 
+    toKey = getCollatingValue(toKey);
+
     final OIndexCursor txCursor;
 
     final Object firstKey = indexChanges.getFirstKey();
@@ -380,17 +408,19 @@ public class OIndexTxAwareMultiValue extends OIndexTxAware<Set<OIdentifiable>> {
     if (indexChanges == null)
       return super.iterateEntries(keys, ascSortOrder);
 
-    final List<Object> sortedKeys = new ArrayList<Object>(keys);
+    final List<Object> sortedKeys = new ArrayList<Object>(keys.size());
+    for (Object key : keys)
+      sortedKeys.add(getCollatingValue(key));
     if (ascSortOrder)
       Collections.sort(sortedKeys, ODefaultComparator.INSTANCE);
     else
       Collections.sort(sortedKeys, Collections.reverseOrder(ODefaultComparator.INSTANCE));
 
     final OIndexCursor txCursor = new OIndexAbstractCursor() {
-      private Iterator<Object>        keysIterator   = sortedKeys.iterator();
+      private Iterator<Object> keysIterator = sortedKeys.iterator();
 
       private Iterator<OIdentifiable> valuesIterator = new OEmptyIterator<OIdentifiable>();
-      private Object                  key;
+      private Object key;
 
       @Override
       public Map.Entry<Object, OIdentifiable> nextEntry() {
@@ -472,22 +502,7 @@ public class OIndexTxAwareMultiValue extends OIndexTxAware<Set<OIdentifiable>> {
   }
 
   private Map.Entry<Object, OIdentifiable> createMapEntry(final Object key, final OIdentifiable backendValue) {
-    return new Map.Entry<Object, OIdentifiable>() {
-      @Override
-      public Object getKey() {
-        return key;
-      }
-
-      @Override
-      public OIdentifiable getValue() {
-        return backendValue;
-      }
-
-      @Override
-      public OIdentifiable setValue(OIdentifiable value) {
-        throw new UnsupportedOperationException("setValue");
-      }
-    };
+    return new MapEntry(key, backendValue);
   }
 
   private Set<OIdentifiable> calculateTxValue(final Object key, OTransactionIndexChanges indexChanges) {

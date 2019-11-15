@@ -1,36 +1,31 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.sql;
 
 import com.orientechnologies.common.listener.OProgressListener;
 import com.orientechnologies.common.profiler.OProfiler;
-import com.orientechnologies.common.profiler.OProfilerMBean;
+import com.orientechnologies.common.profiler.OProfilerStub;
 import com.orientechnologies.orient.core.Orient;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.id.ORID;
-import com.orientechnologies.orient.core.index.OIndex;
-import com.orientechnologies.orient.core.index.OIndexAbstractCursor;
-import com.orientechnologies.orient.core.index.OIndexCursor;
-import com.orientechnologies.orient.core.index.OIndexDefinition;
-import com.orientechnologies.orient.core.index.OIndexInternal;
-import com.orientechnologies.orient.core.index.OIndexKeyCursor;
+import com.orientechnologies.orient.core.index.*;
 import com.orientechnologies.orient.core.iterator.OEmptyIterator;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.metadata.schema.OType;
@@ -57,7 +52,7 @@ import java.util.*;
 
 @SuppressWarnings({ "unchecked", "rawtypes" })
 public class OChainedIndexProxy<T> implements OIndex<T> {
-  private final OIndex<T>       firstIndex;
+  private final OIndex<T> firstIndex;
 
   private final List<OIndex<?>> indexChain;
   private final OIndex<?>       lastIndex;
@@ -113,8 +108,13 @@ public class OChainedIndexProxy<T> implements OIndex<T> {
 
   private static Collection<OIndex<?>> prepareLastIndexVariants(OClass iSchemaClass, OSQLFilterItemField.FieldChain fieldChain) {
     OClass oClass = iSchemaClass;
+    final Collection<OIndex<?>> result = new ArrayList<OIndex<?>>();
+
     for (int i = 0; i < fieldChain.getItemCount() - 1; i++) {
       oClass = oClass.getProperty(fieldChain.getItemName(i)).getLinkedClass();
+      if (oClass == null) {
+        return result;
+      }
     }
 
     final Set<OIndex<?>> involvedIndexes = new TreeSet<OIndex<?>>(new Comparator<OIndex<?>>() {
@@ -125,7 +125,6 @@ public class OChainedIndexProxy<T> implements OIndex<T> {
 
     involvedIndexes.addAll(oClass.getInvolvedIndexes(fieldChain.getItemName(fieldChain.getItemCount() - 1)));
     final Collection<Class<? extends OIndex>> indexTypes = new HashSet<Class<? extends OIndex>>(3);
-    final Collection<OIndex<?>> result = new ArrayList<OIndex<?>>();
 
     for (OIndex<?> involvedIndex : involvedIndexes) {
       if (!indexTypes.contains(involvedIndex.getInternal().getClass())) {
@@ -159,7 +158,7 @@ public class OChainedIndexProxy<T> implements OIndex<T> {
    * 
    * Requirements to the base index:
    * <ul>
-   * <li>Should be unique or not unique. Other types can not be used to get all documents with required links.</li>
+   * <li>Should be unique or not unique. Other types cannot be used to get all documents with required links.</li>
    * <li>Should not be composite hash index. As soon as hash index does not support partial match search.</li>
    * <li>Composite index that ignores null values should not be used.</li>
    * <li>Hash index is better than tree based indexes.</li>
@@ -221,11 +220,11 @@ public class OChainedIndexProxy<T> implements OIndex<T> {
   }
 
   /**
-   * Check if index can be used as base index.
+   * Checks if index can be used as base index.
    * 
    * Requirements to the base index:
    * <ul>
-   * <li>Should be unique or not unique. Other types can not be used to get all documents with required links.</li>
+   * <li>Should be unique or not unique. Other types cannot be used to get all documents with required links.</li>
    * <li>Should not be composite hash index. As soon as hash index does not support partial match search.</li>
    * <li>Composite index that ignores null values should not be used.</li>
    * </ul>
@@ -236,6 +235,20 @@ public class OChainedIndexProxy<T> implements OIndex<T> {
    */
   public static boolean isAppropriateAsBase(OIndex<?> index) {
     return priorityOfUsage(index) > 0;
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public long getRebuildVersion() {
+    long rebuildVersion = 0;
+
+    for (OIndex<?> index : indexChain) {
+      rebuildVersion += index.getRebuildVersion();
+    }
+
+    return rebuildVersion;
   }
 
   private static boolean supportNullValues(OIndex<?> index) {
@@ -286,7 +299,8 @@ public class OChainedIndexProxy<T> implements OIndex<T> {
 
     final Set<OIdentifiable> result = new HashSet<OIdentifiable>();
 
-    result.addAll(applyTailIndexes(lastIndexResult));
+    if (lastIndexResult != null)
+      result.addAll(applyTailIndexes(lastIndexResult));
 
     return (T) result;
   }
@@ -391,17 +405,17 @@ public class OChainedIndexProxy<T> implements OIndex<T> {
   }
 
   /**
-   * Register statistic information about usage of index in {@link OProfiler}.
+   * Register statistic information about usage of index in {@link OProfilerStub}.
    * 
    * @param index
    *          which usage is registering.
    */
   private void updateStatistic(OIndex<?> index) {
 
-    final OProfilerMBean profiler = Orient.instance().getProfiler();
+    final OProfiler profiler = Orient.instance().getProfiler();
     if (profiler.isRecording()) {
-      Orient.instance().getProfiler()
-          .updateCounter(profiler.getDatabaseMetric(index.getDatabaseName(), "query.indexUsed"), "Used index in query", +1);
+      Orient.instance().getProfiler().updateCounter(profiler.getDatabaseMetric(index.getDatabaseName(), "query.indexUsed"),
+          "Used index in query", +1);
 
       final int paramCount = index.getDefinition().getParamCount();
       if (paramCount > 1) {
@@ -431,7 +445,7 @@ public class OChainedIndexProxy<T> implements OIndex<T> {
     throw new UnsupportedOperationException("Not allowed operation");
   }
 
-	public OType[] getKeyTypes() {
+  public OType[] getKeyTypes() {
     throw new UnsupportedOperationException("Not allowed operation");
   }
 
@@ -463,6 +477,11 @@ public class OChainedIndexProxy<T> implements OIndex<T> {
     throw new UnsupportedOperationException("Not allowed operation");
   }
 
+  @Override
+  public long count(Object iKey) {
+    throw new UnsupportedOperationException("Not allowed operation");
+  }
+
   public long getKeySize() {
     throw new UnsupportedOperationException("Not allowed operation");
   }
@@ -476,12 +495,12 @@ public class OChainedIndexProxy<T> implements OIndex<T> {
     throw new UnsupportedOperationException("Not allowed operation");
   }
 
-  @Override
-  public void deleteWithoutIndexLoad(String indexName) {
+  public String getType() {
     throw new UnsupportedOperationException("Not allowed operation");
   }
 
-  public String getType() {
+  @Override
+  public String getAlgorithm() {
     throw new UnsupportedOperationException("Not allowed operation");
   }
 
@@ -525,16 +544,26 @@ public class OChainedIndexProxy<T> implements OIndex<T> {
   }
 
   @Override
+  public int getIndexId() {
+    throw new UnsupportedOperationException("Not allowed operation");
+  }
+
+  @Override
+  public boolean isUnique() {
+    return firstIndex.isUnique();
+  }
+
+  @Override
   public OIndexCursor cursor() {
     throw new UnsupportedOperationException("Not allowed operation");
   }
 
-	@Override
-	public OIndexCursor descCursor() {
-		throw new UnsupportedOperationException("Not allowed operation");
-	}
+  @Override
+  public OIndexCursor descCursor() {
+    throw new UnsupportedOperationException("Not allowed operation");
+  }
 
-	@Override
+  @Override
   public OIndexKeyCursor keyCursor() {
     throw new UnsupportedOperationException("Not allowed operation");
   }
@@ -569,12 +598,17 @@ public class OChainedIndexProxy<T> implements OIndex<T> {
   }
 
   @Override
-  public boolean isRebuiding() {
+  public boolean isRebuilding() {
     return false;
   }
 
+  @Override
+  public int getVersion() {
+    return -1;
+  }
+
   private final class ExternalIndexCursor extends OIndexAbstractCursor {
-    private final OIndexCursor        internalCursor;
+    private final OIndexCursor internalCursor;
 
     private final List<OIdentifiable> queryResult     = new ArrayList<OIdentifiable>();
     private Iterator<OIdentifiable>   currentIterator = OEmptyIterator.IDENTIFIABLE_INSTANCE;
@@ -626,5 +660,10 @@ public class OChainedIndexProxy<T> implements OIndex<T> {
         }
       };
     }
+  }
+
+  @Override
+  public int compareTo(OIndex<T> o) {
+    throw new UnsupportedOperationException();
   }
 }

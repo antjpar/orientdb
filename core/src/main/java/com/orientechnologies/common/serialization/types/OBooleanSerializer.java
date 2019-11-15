@@ -1,40 +1,42 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 
 package com.orientechnologies.common.serialization.types;
 
-import com.orientechnologies.common.directmemory.ODirectMemoryPointer;
+import com.orientechnologies.orient.core.storage.impl.local.paginated.wal.OWALChanges;
+
+import java.nio.ByteBuffer;
 
 /**
  * Serializer for boolean type .
  *
- * @author ibershadskiy <a href="mailto:ibersh20@gmail.com">Ilya Bershadskiy</a>
+ * @author Ilya Bershadskiy (ibersh20-at-gmail.com)
  * @since 18.01.12
  */
 public class OBooleanSerializer implements OBinarySerializer<Boolean> {
   /**
    * size of boolean value in bytes
    */
-  public static final int          BOOLEAN_SIZE = 1;
-  public static final byte         ID           = 1;
-  public static OBooleanSerializer INSTANCE     = new OBooleanSerializer();
+  public static final int                BOOLEAN_SIZE = 1;
+  public static final byte               ID           = 1;
+  public static final OBooleanSerializer INSTANCE     = new OBooleanSerializer();
 
   public int getObjectSize(Boolean object, Object... hints) {
     return BOOLEAN_SIZE;
@@ -86,35 +88,6 @@ public class OBooleanSerializer implements OBinarySerializer<Boolean> {
     return deserializeLiteral(stream, startPosition);
   }
 
-  public void serializeInDirectMemory(Boolean object, ODirectMemoryPointer pointer, long offset, Object... hints) {
-    pointer.setByte(offset, object ? (byte) 1 : 0);
-  }
-
-  @Override
-  public void serializeInDirectMemoryObject(final Boolean object, final ODirectMemoryPointer pointer, final long offset,
-      final Object... hints) {
-    pointer.setByte(offset, object.booleanValue() ? (byte) 1 : 0);
-  }
-
-  public void serializeInDirectMemory(final boolean object, final ODirectMemoryPointer pointer, final long offset,
-      final Object... hints) {
-    pointer.setByte(offset, object ? (byte) 1 : 0);
-  }
-
-  @Override
-  public Boolean deserializeFromDirectMemoryObject(final ODirectMemoryPointer pointer, final long offset) {
-    return pointer.getByte(offset) > 0;
-  }
-
-  public boolean deserializeFromDirectMemory(final ODirectMemoryPointer pointer, final long offset) {
-    return pointer.getByte(offset) > 0;
-  }
-
-  @Override
-  public int getObjectSizeInDirectMemory(ODirectMemoryPointer pointer, long offset) {
-    return BOOLEAN_SIZE;
-  }
-
   public boolean isFixedLength() {
     return true;
   }
@@ -126,5 +99,45 @@ public class OBooleanSerializer implements OBinarySerializer<Boolean> {
   @Override
   public Boolean preprocess(final Boolean value, final Object... hints) {
     return value;
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public void serializeInByteBufferObject(Boolean object, ByteBuffer buffer, Object... hints) {
+    buffer.put(object.booleanValue() ? (byte) 1 : (byte) 0);
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public Boolean deserializeFromByteBufferObject(ByteBuffer buffer) {
+    return buffer.get() > 0;
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public int getObjectSizeInByteBuffer(ByteBuffer buffer) {
+    return BOOLEAN_SIZE;
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public Boolean deserializeFromByteBufferObject(ByteBuffer buffer, OWALChanges walChanges, int offset) {
+    return walChanges.getByteValue(buffer, offset) > 0;
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public int getObjectSizeInByteBuffer(ByteBuffer buffer, OWALChanges walChanges, int offset) {
+    return BOOLEAN_SIZE;
   }
 }

@@ -28,7 +28,7 @@ import javax.persistence.Transient;
 import javax.persistence.Version;
 
 import com.orientechnologies.orient.core.record.impl.ODocument;
-import com.orientechnologies.orient.core.record.impl.ORecordBytes;
+import com.orientechnologies.orient.core.record.impl.OBlob;
 import com.orientechnologies.orient.test.domain.business.Child;
 
 /**
@@ -45,8 +45,10 @@ public class JavaAttachDetachTestClass {
   public Object                version;
   public ODocument             embeddedDocument;
   public ODocument             document;
-  public ORecordBytes          byteArray;
+  public OBlob                 byteArray;
   public String                name;
+  public Child                 specialChild;
+  public Child                 specialChild2;
   public Map<String, Child>    children     = new HashMap<String, Child>();
   public List<EnumTest>        enumList     = new ArrayList<EnumTest>();
   public Set<EnumTest>         enumSet      = new HashSet<EnumTest>();
@@ -100,11 +102,11 @@ public class JavaAttachDetachTestClass {
     this.document = document;
   }
 
-  public ORecordBytes getByteArray() {
+  public OBlob getByteArray() {
     return byteArray;
   }
 
-  public void setByteArray(ORecordBytes byteArray) {
+  public void setByteArray(OBlob byteArray) {
     this.byteArray = byteArray;
   }
 
@@ -114,6 +116,22 @@ public class JavaAttachDetachTestClass {
 
   public void setName(String name) {
     this.name = name;
+  }
+
+  public Child getSpecialChild() {
+    return specialChild;
+  }
+
+  public void setSpecialChild(Child specialChild) {
+    this.specialChild = specialChild;
+  }
+
+  public Child getSpecialChild2() {
+      return specialChild;
+    }
+
+  public void setSpecialChild2(Child specialChild2) {
+    this.specialChild2 = specialChild2;
   }
 
   public Map<String, Child> getChildren() {

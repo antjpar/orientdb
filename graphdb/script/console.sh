@@ -3,9 +3,6 @@
 # Copyright (c) Orient Technologies LTD (http://www.orientechnologies.com)
 #
 
-#set current working directory
-cd `dirname $0`
-
 # resolve links - $0 may be a softlink
 PRG="$0"
 
@@ -26,6 +23,7 @@ PRGDIR=`dirname "$PRG"`
 [ -f "$ORIENTDB_HOME"/lib/orientdb-tools-@VERSION@.jar ] || ORIENTDB_HOME=`cd "$PRGDIR/.." ; pwd`
 export ORIENTDB_HOME
 
+
 # Set JavaHome if it exists
 if [ -f "${JAVA_HOME}/bin/java" ]; then 
    JAVA=${JAVA_HOME}/bin/java
@@ -34,12 +32,23 @@ else
 fi
 export JAVA
 
-ORIENTDB_SETTINGS="-Dcache.level1.enabled=false -Dcache.level2.enabled=false -Djava.util.logging.config.file="$ORIENTDB_HOME/config/orientdb-client-log.properties" -Djava.awt.headless=true"
-#JAVA_OPTS=-Xmx1024m
-KEYSTORE=$ORIENTDB_HOME/config/cert/orientdb-console.ks
-KEYSTORE_PASS=password
-TRUSTSTORE=$ORIENTDB_HOME/config/cert/orientdb-console.ts
-TRUSTSTORE_PASS=password
-SSL_OPTS="-Dclient.ssl.enabled=false -Djavax.net.ssl.keyStore=$KEYSTORE -Djavax.net.ssl.keyStorePassword=$KEYSTORE_PASS -Djavax.net.ssl.trustStore=$TRUSTSTORE -Djavax.net.ssl.trustStorePassword=$TRUSTSTORE_PASS"
+if [ -z "$ORIENTDB_OPTS_MEMORY" ] ; then
+    ORIENTDB_OPTS_MEMORY="-Xmx1024m "
+fi
 
-"$JAVA" -client $JAVA_OPTS $ORIENTDB_SETTINGS $SSL_OPTS -Dfile.encoding=utf-8 -Dorientdb.build.number="@BUILD@" -cp "$ORIENTDB_HOME/lib/orientdb-tools-@VERSION@.jar:$ORIENTDB_HOME/lib/*" com.orientechnologies.orient.graph.console.OGremlinConsole $*
+ORIENTDB_SETTINGS="-XX:MaxDirectMemorySize=512g -Djava.util.logging.config.file=\"$ORIENTDB_HOME/config/orientdb-client-log.properties\" -Djava.awt.headless=true"
+#JAVA_OPTS=-Xmx1024m
+KEYSTORE="$ORIENTDB_HOME/config/cert/orientdb-console.ks"
+KEYSTORE_PASS=password
+TRUSTSTORE="$ORIENTDB_HOME/config/cert/orientdb-console.ts"
+TRUSTSTORE_PASS=password
+SSL_OPTS="-Dclient.ssl.enabled=false "
+
+exec "$JAVA" -client $JAVA_OPTS $ORIENTDB_OPTS_MEMORY $ORIENTDB_SETTINGS $SSL_OPTS \
+    -Dfile.encoding=utf-8 -Dorientdb.build.number="@BUILD@" \
+    -cp "$ORIENTDB_HOME/lib/orientdb-tools-@VERSION@.jar:$ORIENTDB_HOME/lib/*:$ORIENTDB_HOME/plugins/*" \
+    "-Djavax.net.ssl.keyStore=$KEYSTORE" \
+    "-Djavax.net.ssl.keyStorePassword=$KEYSTORE_PASS" \
+    "-Djavax.net.ssl.trustStore=$TRUSTSTORE" \
+    "-Djavax.net.ssl.trustStorePassword=$TRUSTSTORE_PASS" \
+    com.orientechnologies.orient.graph.console.OGremlinConsole $*

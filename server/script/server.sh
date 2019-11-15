@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) Orient Technologies LTD (http://www.orientechnologies.com)
+# Copyright (c) OrientDB LTD (http://orientdb.com/)
 #
 
 echo "           .                                          "
@@ -25,10 +25,8 @@ echo "           ,,:\` \`,,.                                  "
 echo "          ,,,    .,\`                                  "
 echo "         ,,.     \`,                                          GRAPH DATABASE  "
 echo "       \`\`        \`.                                                          "
-echo "                 \`\`                                         www.orientdb.org "
+echo "                 \`\`                                          orientdb.com"
 echo "                 \`                                    "
-
-cd `dirname $0`
 
 # resolve links - $0 may be a softlink
 PRG="$0"
@@ -47,8 +45,9 @@ done
 PRGDIR=`dirname "$PRG"`
 
 # Only set ORIENTDB_HOME if not already set
-[ -f "$ORIENTDB_HOME"/bin/orient.sh ] || ORIENTDB_HOME=`cd "$PRGDIR/.." ; pwd`
+[ -f "$ORIENTDB_HOME"/bin/server.sh ] || ORIENTDB_HOME=`cd "$PRGDIR/.." ; pwd`
 export ORIENTDB_HOME
+cd "$ORIENTDB_HOME/bin"
 
 if [ ! -f "${CONFIG_FILE}" ]
 then
@@ -69,9 +68,59 @@ else
 fi
 export JAVA
 
-LOG_FILE=$ORIENTDB_HOME/config/orientdb-server-log.properties
-WWW_PATH=$ORIENTDB_HOME/www
-ORIENTDB_SETTINGS="-Dprofiler.enabled=true"
-JAVA_OPTS_SCRIPT="-Djna.nosys=true -XX:+HeapDumpOnOutOfMemoryError -Djava.awt.headless=true -Dfile.encoding=UTF8 -Drhino.opt.level=9"
+if [ -z "$ORIENTDB_LOG_CONF" ] ; then
+    ORIENTDB_LOG_CONF=$ORIENTDB_HOME/config/orientdb-server-log.properties
+fi
 
-"$JAVA" $JAVA_OPTS $JAVA_OPTS_SCRIPT $ORIENTDB_SETTINGS -Djava.util.logging.config.file="$LOG_FILE" -Dorientdb.config.file="$CONFIG_FILE" -Dorientdb.www.path="$WWW_PATH" -Dorientdb.build.number="@BUILD@" -cp "$ORIENTDB_HOME/lib/orientdb-server-@VERSION@.jar:$ORIENTDB_HOME/lib/*" $* com.orientechnologies.orient.server.OServerMain
+if [ -z "$ORIENTDB_WWW_PATH" ] ; then
+    ORIENTDB_WWW_PATH=$ORIENTDB_HOME/www
+fi
+
+if [ -z "$ORIENTDB_PID" ] ; then
+ORIENTDB_PID=$ORIENTDB_HOME/bin/orient.pid
+fi
+
+if [ -f "$ORIENTDB_PID" ]; then
+    echo "removing old pid file $ORIENTDB_PID"
+    rm "$ORIENTDB_PID"
+fi
+
+# DEBUG OPTS, SIMPLY USE 'server.sh debug'
+DEBUG_OPTS=""
+ARGS='';
+for var in "$@"; do
+    if [ "$var" = "debug" ]; then
+        DEBUG_OPTS="-Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=1044"
+    else
+        ARGS="$ARGS $var"
+    fi
+done
+
+# ORIENTDB memory options, default to 2GB of heap.
+
+if [ -z "$ORIENTDB_OPTS_MEMORY" ] ; then
+    ORIENTDB_OPTS_MEMORY="-Xms2G -Xmx2G"
+fi
+
+if [ -z "$JAVA_OPTS_SCRIPT" ] ; then
+    JAVA_OPTS_SCRIPT="-Djna.nosys=true -XX:+HeapDumpOnOutOfMemoryError -XX:MaxDirectMemorySize=512g -Djava.awt.headless=true -Dfile.encoding=UTF8 -Drhino.opt.level=9"
+fi
+
+# ORIENTDB SETTINGS LIKE DISKCACHE, ETC
+if [ -z "$ORIENTDB_SETTINGS" ]; then
+    ORIENTDB_SETTINGS="" # HERE YOU CAN PUT YOUR DEFAULT SETTINGS
+fi
+
+echo $$ > $ORIENTDB_PID
+
+exec "$JAVA" -d64 $JAVA_OPTS \
+    $ORIENTDB_OPTS_MEMORY \
+    $JAVA_OPTS_SCRIPT \
+    $ORIENTDB_SETTINGS \
+    $DEBUG_OPTS \
+    -Djava.util.logging.config.file="$ORIENTDB_LOG_CONF" \
+    -Dorientdb.config.file="$CONFIG_FILE" \
+    -Dorientdb.www.path="$ORIENTDB_WWW_PATH" \
+    -Dorientdb.build.number="@BUILD@" \
+    -cp "$ORIENTDB_HOME/lib/orientdb-server-@VERSION@.jar:$ORIENTDB_HOME/lib/*:$ORIENTDB_HOME/plugins/*" \
+    $ARGS com.orientechnologies.orient.server.OServerMain

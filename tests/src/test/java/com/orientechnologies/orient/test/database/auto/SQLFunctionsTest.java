@@ -16,11 +16,12 @@
 package com.orientechnologies.orient.test.database.auto;
 
 import com.orientechnologies.orient.core.command.OCommandContext;
-import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
-import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.metadata.schema.OType;
+import com.orientechnologies.orient.core.metadata.security.ORole;
+import com.orientechnologies.orient.core.metadata.security.ORule;
+import com.orientechnologies.orient.core.metadata.security.OUser;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.security.OSecurityManager;
 import com.orientechnologies.orient.core.sql.OCommandSQL;
@@ -29,11 +30,15 @@ import com.orientechnologies.orient.core.sql.OSQLEngine;
 import com.orientechnologies.orient.core.sql.functions.OSQLFunctionAbstract;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
 import org.testng.Assert;
-import org.testng.annotations.*;
+import org.testng.annotations.Optional;
+import org.testng.annotations.Parameters;
+import org.testng.annotations.Test;
 
 import java.io.UnsupportedEncodingException;
 import java.security.NoSuchAlgorithmException;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Date;
 import java.util.HashSet;
@@ -116,6 +121,56 @@ public class SQLFunctionsTest extends DocumentDBBaseTest {
     }
   }
 
+  public void queryCountExtendsRestricted() {
+    OClass restricted = database.getMetadata().getSchema().getClass("ORestricted");
+    Assert.assertNotNull(restricted);
+
+    database.getMetadata().getSchema().createClass("QueryCountExtendsRestrictedClass", restricted);
+
+    OUser admin = database.getMetadata().getSecurity().getUser("admin");
+    OUser reader = database.getMetadata().getSecurity().getUser("reader");
+
+    ORole byPassRestrictedRole = database.getMetadata().getSecurity().createRole("byPassRestrictedRole",
+        ORole.ALLOW_MODES.DENY_ALL_BUT);
+    byPassRestrictedRole.addRule(ORule.ResourceGeneric.BYPASS_RESTRICTED, null, ORole.PERMISSION_READ);
+    byPassRestrictedRole.save();
+
+    database.getMetadata().getSecurity().createUser("superReader", "superReader", "reader", "byPassRestrictedRole");
+
+    ODocument docAdmin = new ODocument("QueryCountExtendsRestrictedClass");
+    docAdmin.field("_allowRead", new HashSet<OIdentifiable>(Arrays.asList(admin.getDocument().getIdentity())));
+    docAdmin.save();
+
+    ODocument docReader = new ODocument("QueryCountExtendsRestrictedClass");
+    docReader.field("_allowRead", new HashSet<OIdentifiable>(Arrays.asList(reader.getDocument().getIdentity())));
+    docReader.save();
+
+    List<ODocument> result = database.query(new OSQLSynchQuery<ODocument>("select count(*) from QueryCountExtendsRestrictedClass"));
+    ODocument count = result.get(0);
+    Assert.assertEquals(2L, count.field("count"));
+
+    database.close();
+    database.open("admin", "admin");
+
+    result = database.query(new OSQLSynchQuery<ODocument>("select count(*) from QueryCountExtendsRestrictedClass"));
+    count = result.get(0);
+    Assert.assertEquals(2L, count.field("count"));
+
+    database.close();
+    database.open("reader", "reader");
+
+    result = database.query(new OSQLSynchQuery<ODocument>("select count(*) from QueryCountExtendsRestrictedClass"));
+    count = result.get(0);
+    Assert.assertEquals(1L, count.field("count"));
+
+    database.close();
+    database.open("superReader", "superReader");
+
+    result = database.query(new OSQLSynchQuery<ODocument>("select count(*) from QueryCountExtendsRestrictedClass"));
+    count = result.get(0);
+    Assert.assertEquals(2L, count.field("count"));
+  }
+
   @Test
   public void queryCountWithConditions() {
     OClass indexed = database.getMetadata().getSchema().getOrCreateClass("Indexed");
@@ -124,8 +179,8 @@ public class SQLFunctionsTest extends DocumentDBBaseTest {
     database.newInstance("Indexed").field("key", "one").save();
     database.newInstance("Indexed").field("key", "two").save();
 
-    List<ODocument> result = database.command(
-        new OSQLSynchQuery<ODocument>("select count(*) as total from Indexed where key > 'one'")).execute();
+    List<ODocument> result = database
+        .command(new OSQLSynchQuery<ODocument>("select count(*) as total from Indexed where key > 'one'")).execute();
 
     Assert.assertTrue(result.size() == 1);
     for (ODocument d : result) {
@@ -198,8 +253,8 @@ public class SQLFunctionsTest extends DocumentDBBaseTest {
   }
 
   public void testSelectMap() {
-    List<ODocument> result = database.query(new OSQLSynchQuery<ODocument>(
-        "select list( 1, 4, 5.00, 'john', map( 'kAA', 'vAA' ) ) as myresult"));
+    List<ODocument> result = database
+        .query(new OSQLSynchQuery<ODocument>("select list( 1, 4, 5.00, 'john', map( 'kAA', 'vAA' ) ) as myresult"));
 
     Assert.assertEquals(result.size(), 1);
 
@@ -214,7 +269,7 @@ public class SQLFunctionsTest extends DocumentDBBaseTest {
 
     Assert.assertEquals(myresult.size(), 1);
 
-    Assert.assertTrue(myresult.get(0) instanceof Map);
+    Assert.assertTrue(myresult.get(0) instanceof Map, "The object is: " + myresult.getClass());
     Map map = (Map) myresult.get(0);
 
     String value = (String) map.get("kAA");
@@ -261,10 +316,9 @@ public class SQLFunctionsTest extends DocumentDBBaseTest {
 
   @Test
   public void queryComposedAggregates() {
-    List<ODocument> result = database
-        .command(
-            new OSQLSynchQuery<ODocument>(
-                "select MIN(id) as min, max(id) as max, AVG(id) as average, count(id) as total from Account")).execute();
+    List<ODocument> result = database.command(
+        new OSQLSynchQuery<ODocument>("select MIN(id) as min, max(id) as max, AVG(id) as average, sum(id) as total from Account"))
+        .execute();
 
     Assert.assertTrue(result.size() == 1);
     for (ODocument d : result) {
@@ -282,8 +336,9 @@ public class SQLFunctionsTest extends DocumentDBBaseTest {
 
   @Test
   public void queryFormat() {
-    List<ODocument> result = database.command(
-        new OSQLSynchQuery<ODocument>("select format('%d - %s (%s)', nr, street, type, dummy ) as output from Account")).execute();
+    List<ODocument> result = database
+        .command(new OSQLSynchQuery<ODocument>("select format('%d - %s (%s)', nr, street, type, dummy ) as output from Account"))
+        .execute();
 
     Assert.assertTrue(result.size() > 1);
     for (ODocument d : result) {
@@ -336,9 +391,8 @@ public class SQLFunctionsTest extends DocumentDBBaseTest {
     String pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'";
     SimpleDateFormat dateFormat = new SimpleDateFormat(pattern);
 
-    result = database.command(
-        new OSQLSynchQuery<ODocument>("select from Account where created <= date('" + dateFormat.format(new Date()) + "', '"
-            + pattern + "')")).execute();
+    result = database.command(new OSQLSynchQuery<ODocument>(
+        "select from Account where created <= date('" + dateFormat.format(new Date()) + "', \"" + pattern + "\")")).execute();
 
     Assert.assertEquals(result.size(), tot);
     for (ODocument d : result) {
@@ -406,15 +460,74 @@ public class SQLFunctionsTest extends DocumentDBBaseTest {
 
   @Test
   public void testHashMethod() throws UnsupportedEncodingException, NoSuchAlgorithmException {
-    List<ODocument> result = database.command(
-        new OSQLSynchQuery<ODocument>("select name, name.hash() as n256, name.hash('sha-512') as n512 from OUser")).execute();
+    List<ODocument> result = database
+        .command(new OSQLSynchQuery<ODocument>("select name, name.hash() as n256, name.hash('sha-512') as n512 from OUser"))
+        .execute();
 
     Assert.assertFalse(result.isEmpty());
     for (ODocument d : result) {
       final String name = d.field("name");
 
-      Assert.assertEquals(OSecurityManager.digest2String(name, "SHA-256"), d.field("n256"));
-      Assert.assertEquals(OSecurityManager.digest2String(name, "SHA-512"), d.field("n512"));
+      Assert.assertEquals(OSecurityManager.createHash(name, "SHA-256"), d.field("n256"));
+      Assert.assertEquals(OSecurityManager.createHash(name, "SHA-512"), d.field("n512"));
     }
   }
+
+  @Test
+  public void testFirstFunction() throws UnsupportedEncodingException, NoSuchAlgorithmException {
+    List<Long> sequence = new ArrayList<Long>(100);
+    for (long i = 0; i < 100; ++i) {
+      sequence.add(i);
+    }
+    new ODocument("V").field("sequence", sequence).save();
+    sequence.remove(0);
+    new ODocument("V").field("sequence", sequence).save();
+
+    List<ODocument> result = database
+        .command(new OSQLSynchQuery<ODocument>("select first(sequence) from V where sequence is not null")).execute();
+
+    Assert.assertEquals(result.size(), 2);
+    Assert.assertEquals(result.get(0).field("first"), 0l);
+    Assert.assertEquals(result.get(1).field("first"), 1l);
+  }
+
+  @Test
+  public void testLastFunction() throws UnsupportedEncodingException, NoSuchAlgorithmException {
+    List<Long> sequence = new ArrayList<Long>(100);
+    for (long i = 0; i < 100; ++i) {
+      sequence.add(i);
+    }
+    new ODocument("V").field("sequence2", sequence).save();
+    sequence.remove(sequence.size() - 1);
+    new ODocument("V").field("sequence2", sequence).save();
+
+    List<ODocument> result = database
+        .command(new OSQLSynchQuery<ODocument>("select last(sequence2) from V where sequence2 is not null")).execute();
+
+    Assert.assertEquals(result.size(), 2);
+    Assert.assertEquals(result.get(0).field("last"), 99l);
+    Assert.assertEquals(result.get(1).field("last"), 98l);
+
+  }
+
+  @Test
+  public void querySplit() {
+    String sql = "select v.split('-') as value from ( select '1-2-3' as v ) limit 1";
+
+    List<ODocument> result = database.command(new OSQLSynchQuery<ODocument>(sql)).execute();
+
+    Assert.assertEquals(result.size(), 1);
+    for (ODocument d : result) {
+      Assert.assertNotNull(d.field("value"));
+      Assert.assertTrue(d.field("value").getClass().isArray());
+
+      Object[] array = d.field("value");
+
+      Assert.assertEquals(array.length, 3);
+      Assert.assertEquals(array[0], "1");
+      Assert.assertEquals(array[1], "2");
+      Assert.assertEquals(array[2], "3");
+    }
+  }
+
 }

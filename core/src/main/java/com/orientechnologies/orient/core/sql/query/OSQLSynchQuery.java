@@ -1,22 +1,22 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.sql.query;
 
 import java.util.HashMap;
@@ -40,7 +40,7 @@ import com.orientechnologies.orient.core.serialization.OMemoryStream;
  */
 @SuppressWarnings({ "unchecked", "serial" })
 public class OSQLSynchQuery<T extends Object> extends OSQLAsynchQuery<T> implements OCommandResultListener, Iterable<T> {
-  private final OResultSet<T> result              = new OResultSet<T>();
+  private final OResultSet<T> result              = new OConcurrentResultSet<T>();
   private ORID                nextPageRID;
   private Map<Object, Object> previousQueryParams = new HashMap<Object, Object>();
 
@@ -64,7 +64,8 @@ public class OSQLSynchQuery<T extends Object> extends OSQLAsynchQuery<T> impleme
   }
 
   public boolean result(final Object iRecord) {
-    result.add((T) iRecord);
+    if (iRecord != null)
+      result.add((T) iRecord);
     return true;
   }
 
@@ -74,7 +75,7 @@ public class OSQLSynchQuery<T extends Object> extends OSQLAsynchQuery<T> impleme
   }
 
   @Override
-  public List<T> run(Object... iArgs) {
+  public List<T> run(final Object... iArgs) {
     result.clear();
 
     final Map<Object, Object> queryParams;
@@ -83,9 +84,12 @@ public class OSQLSynchQuery<T extends Object> extends OSQLAsynchQuery<T> impleme
 
     final List<Object> res = (List<Object>) super.run(iArgs);
 
-    if (res != result) {
-      for (Object r : res)
-        result.add((T) r);
+    if (res != result && res != null && result.isEmptyNoWait()) {
+      Iterator<Object> iter = res.iterator();
+      while (iter.hasNext()) {
+        Object item = iter.next();
+        result.add((T) item);
+      }
     }
 
     ((OResultSet) result).setCompleted();
@@ -97,6 +101,11 @@ public class OSQLSynchQuery<T extends Object> extends OSQLAsynchQuery<T> impleme
     }
 
     return result;
+  }
+
+  @Override
+  public boolean isIdempotent() {
+    return true;
   }
 
   public Object getResult() {
@@ -137,7 +146,7 @@ public class OSQLSynchQuery<T extends Object> extends OSQLAsynchQuery<T> impleme
   }
 
   @Override
-  protected void queryFromStream(OMemoryStream buffer) {
+  protected void queryFromStream(final OMemoryStream buffer) {
     super.queryFromStream(buffer);
 
     final String rid = buffer.getAsString();

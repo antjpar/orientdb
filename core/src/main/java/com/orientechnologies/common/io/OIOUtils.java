@@ -1,46 +1,44 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.common.io;
 
+import com.orientechnologies.common.util.OPatternConst;
+
 import java.io.*;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.Locale;
 
 public class OIOUtils {
-  public static final long SECOND = 1000;
-  public static final long MINUTE = SECOND * 60;
-  public static final long HOUR   = MINUTE * 60;
-  public static final long DAY    = HOUR * 24;
-  public static final long YEAR   = DAY * 365;
-  public static final long WEEK   = DAY * 7;
-
-  public static byte[] toStream(Externalizable iSource) throws IOException {
-    final ByteArrayOutputStream stream = new ByteArrayOutputStream();
-    final ObjectOutputStream oos = new ObjectOutputStream(stream);
-    iSource.writeExternal(oos);
-    oos.flush();
-    stream.flush();
-    return stream.toByteArray();
-  }
+  public static final long   SECOND   = 1000;
+  public static final long   MINUTE   = SECOND * 60;
+  public static final long   HOUR     = MINUTE * 60;
+  public static final long   DAY      = HOUR * 24;
+  public static final long   YEAR     = DAY * 365;
+  public static final long   WEEK     = DAY * 7;
+  public static final String UTF8_BOM = "\uFEFF";
 
   public static long getTimeAsMillisecs(final Object iSize) {
     if (iSize == null)
@@ -67,7 +65,7 @@ public class OIOUtils {
       time = time.toUpperCase(Locale.ENGLISH);
 
       int pos = time.indexOf("MS");
-      final String timeAsNumber = time.replaceAll("[^\\d]", "");
+      final String timeAsNumber = OPatternConst.PATTERN_NUMBERS.matcher(time).replaceAll("");
       if (pos > -1)
         return Long.parseLong(timeAsNumber);
 
@@ -120,33 +118,71 @@ public class OIOUtils {
 
   public static Date getTodayWithTime(final String iTime) throws ParseException {
     final SimpleDateFormat df = new SimpleDateFormat("HH:mm:ss");
-    final long today = System.currentTimeMillis();
-    final Date rslt = new Date();
-    rslt.setTime(today - (today % DAY) + df.parse(iTime).getTime());
-    return rslt;
+    Calendar calParsed = Calendar.getInstance();
+    calParsed.setTime(df.parse(iTime));
+    Calendar cal = Calendar.getInstance();
+    cal.set(Calendar.HOUR_OF_DAY, calParsed.get(Calendar.HOUR_OF_DAY));
+    cal.set(Calendar.MINUTE, calParsed.get(Calendar.MINUTE));
+    cal.set(Calendar.SECOND, calParsed.get(Calendar.SECOND));
+    cal.set(Calendar.MILLISECOND, 0);
+    return cal.getTime();
   }
 
-  public static String readFileAsString(final File iFile) throws java.io.IOException {
+  public static String readFileAsString(final File iFile) throws IOException {
     return readStreamAsString(new FileInputStream(iFile));
   }
 
-  public static String readStreamAsString(final InputStream iStream) throws java.io.IOException {
+  public static String readFileAsString(final File iFile, Charset iCharset) throws IOException {
+    return readStreamAsString(new FileInputStream(iFile), iCharset);
+  }
+
+  public static String readStreamAsString(final InputStream iStream) throws IOException {
+    return readStreamAsString(iStream, StandardCharsets.UTF_8);
+  }
+
+  public static String readStreamAsString(final InputStream iStream, Charset iCharset) throws IOException {
     final StringBuffer fileData = new StringBuffer(1000);
-    final BufferedReader reader = new BufferedReader(new InputStreamReader(iStream));
+    final BufferedReader reader = new BufferedReader(new InputStreamReader(iStream, iCharset));
     try {
       final char[] buf = new char[1024];
       int numRead = 0;
+
       while ((numRead = reader.read(buf)) != -1) {
         String readData = String.valueOf(buf, 0, numRead);
+
+        if (fileData.length() == 0 && readData.startsWith(UTF8_BOM))
+          // SKIP UTF-8 BOM IF ANY
+          readData = readData.substring(1);
+
         fileData.append(readData);
       }
     } finally {
       reader.close();
     }
     return fileData.toString();
+
   }
 
-  public static long copyStream(final InputStream in, final OutputStream out, long iMax) throws java.io.IOException {
+  public static void writeFile(final File iFile, final String iContent) throws IOException {
+    final FileOutputStream fos = new FileOutputStream(iFile);
+    try {
+      final OutputStreamWriter os = new OutputStreamWriter(fos);
+      try {
+        final BufferedWriter writer = new BufferedWriter(os);
+        try {
+          writer.write(iContent);
+        } finally {
+          writer.close();
+        }
+      } finally {
+        os.close();
+      }
+    } finally {
+      fos.close();
+    }
+  }
+
+  public static long copyStream(final InputStream in, final OutputStream out, long iMax) throws IOException {
     if (iMax < 0)
       iMax = Long.MAX_VALUE;
 
@@ -209,7 +245,7 @@ public class OIOUtils {
   }
 
   public static String java2unicode(final String iInput) {
-    final StringBuilder result = new StringBuilder(iInput.length()*2);
+    final StringBuilder result = new StringBuilder(iInput.length() * 2);
     final int inputSize = iInput.length();
 
     char ch;
@@ -226,7 +262,7 @@ public class OIOUtils {
         for (int j = 0; j < 4 - hex.length(); j++)
           // Prepend zeros because unicode requires 4 digits
           result.append('0');
-        result.append(hex.toLowerCase()); // standard unicode format.
+        result.append(hex.toLowerCase(Locale.ENGLISH)); // standard unicode format.
         // ostr.append(hex.toLowerCase(Locale.ENGLISH));
       }
     }
@@ -243,8 +279,8 @@ public class OIOUtils {
     if (s == null)
       return false;
 
-    return s.length() > 1
-        && (s.charAt(0) == '\'' && s.charAt(s.length() - 1) == '\'' || s.charAt(0) == '"' && s.charAt(s.length() - 1) == '"');
+    return s.length() > 1 && (s.charAt(0) == '\'' && s.charAt(s.length() - 1) == '\''
+        || s.charAt(0) == '"' && s.charAt(s.length() - 1) == '"');
   }
 
   public static String getStringContent(final Object iValue) {
@@ -256,22 +292,30 @@ public class OIOUtils {
     if (s == null)
       return null;
 
-    if (s.length() > 1
-        && (s.charAt(0) == '\'' && s.charAt(s.length() - 1) == '\'' || s.charAt(0) == '"' && s.charAt(s.length() - 1) == '"'))
+    if (s.length() > 1 && (s.charAt(0) == '\'' && s.charAt(s.length() - 1) == '\''
+        || s.charAt(0) == '"' && s.charAt(s.length() - 1) == '"'))
+      return s.substring(1, s.length() - 1);
+
+    if (s.length() > 1 && (s.charAt(0) == '`' && s.charAt(s.length() - 1) == '`'))
       return s.substring(1, s.length() - 1);
 
     return s;
   }
 
+  public static String wrapStringContent(final Object iValue, final char iStringDelimiter) {
+    if (iValue == null)
+      return null;
+
+    final String s = iValue.toString();
+
+    if (s == null)
+      return null;
+
+    return iStringDelimiter + s + iStringDelimiter;
+  }
+
   public static boolean equals(final byte[] buffer, final byte[] buffer2) {
-    if (buffer == null || buffer2 == null || buffer.length != buffer2.length)
-      return false;
-
-    for (int i = 0; i < buffer.length; ++i)
-      if (buffer[i] != buffer2[i])
-        return false;
-
-    return true;
+    return Arrays.equals(buffer, buffer2);
   }
 
   public static boolean isLong(final String iText) {
@@ -282,5 +326,17 @@ public class OIOUtils {
       isLong = isLong & ((c >= '0' && c <= '9'));
     }
     return isLong;
+  }
+
+  public static void readFully(InputStream in, byte[] b, int off, int len) throws IOException {
+    while (len > 0) {
+      int n = in.read(b, off, len);
+
+      if (n == -1) {
+        throw new EOFException();
+      }
+      off += n;
+      len -= n;
+    }
   }
 }

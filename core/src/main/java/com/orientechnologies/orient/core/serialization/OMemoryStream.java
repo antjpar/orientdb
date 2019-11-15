@@ -1,55 +1,58 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.serialization;
 
+import com.orientechnologies.common.exception.OException;
 import com.orientechnologies.common.profiler.OAbstractProfiler.OProfilerHookValue;
-import com.orientechnologies.common.profiler.OProfilerMBean.METRIC_TYPE;
+import com.orientechnologies.common.profiler.OProfiler.METRIC_TYPE;
 import com.orientechnologies.common.util.OArrays;
 import com.orientechnologies.orient.core.Orient;
+import com.orientechnologies.orient.core.exception.OSerializationException;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
 import java.nio.charset.Charset;
 import java.util.Arrays;
 
 /**
  * Class to parse and write buffers in very fast way.
- * 
+ *
  * @author Luca Garulli
- * 
+ * @deprecated use {@link OByteArrayOutputStream} instead.
  */
+
+@Deprecated
 public class OMemoryStream extends OutputStream {
-  public static final int  DEF_SIZE              = 1024;
+  public static final int DEF_SIZE = 1024;
 
-  private byte[]           buffer;
-  private int              position;
-  private Charset          charset               = Charset.forName("utf8");
+  private byte[] buffer;
+  private int    position;
+  private Charset charset = Charset.forName("utf8");
 
-  private static final int NATIVE_COPY_THRESHOLD = 9;
-  private static long      metricResize          = 0;
+  private static final int  NATIVE_COPY_THRESHOLD = 9;
+  private static       long metricResize          = 0;
 
   static {
-    Orient
-        .instance()
-        .getProfiler()
-      .registerHookValue("system.memory.stream.resize", "Number of resizes of memory stream buffer", METRIC_TYPE.COUNTER,
+    Orient.instance().getProfiler()
+        .registerHookValue("system.memory.stream.resize", "Number of resizes of memory stream buffer", METRIC_TYPE.COUNTER,
             new OProfilerHookValue() {
               public Object getValue() {
                 return metricResize;
@@ -74,11 +77,9 @@ public class OMemoryStream extends OutputStream {
 
   /**
    * Move bytes left or right of an offset.
-   * 
-   * @param iFrom
-   *          Starting position
-   * @param iPosition
-   *          Offset to the iFrom value: positive values mean move right, otherwise move left
+   *
+   * @param iFrom     Starting position
+   * @param iPosition Offset to the iFrom value: positive values mean move right, otherwise move left
    */
   public void move(final int iFrom, final int iPosition) {
     if (iPosition == 0)
@@ -108,7 +109,7 @@ public class OMemoryStream extends OutputStream {
 
   /**
    * Returns the used buffer as byte[].
-   * 
+   *
    * @return [result.length = size()]
    */
   public final byte[] toByteArray() {
@@ -179,7 +180,7 @@ public class OMemoryStream extends OutputStream {
 
   /**
    * Append byte[] to the stream.
-   * 
+   *
    * @param iContent
    * @return The begin offset of the appended content
    * @throws IOException
@@ -214,7 +215,11 @@ public class OMemoryStream extends OutputStream {
   }
 
   public final int setCustom(final String iContent) {
-    return set(OBinaryProtocol.string2bytes(iContent));
+    try {
+      return set(iContent.getBytes("UTF-8"));
+    } catch (UnsupportedEncodingException e) {
+      throw OException.wrapException(new OSerializationException("error encoding string"),e);
+    }
   }
 
   public final int setUtf8(final String iContent) {
@@ -263,6 +268,11 @@ public class OMemoryStream extends OutputStream {
     return position;
   }
 
+  public OMemoryStream setPosition(final int iPosition) {
+    position = iPosition;
+    return this;
+  }
+
   private void assureSpaceFor(final int iLength) {
     final byte[] localBuffer = buffer;
     final int pos = position;
@@ -287,9 +297,8 @@ public class OMemoryStream extends OutputStream {
 
   /**
    * Jumps bytes positioning forward of passed bytes.
-   * 
-   * @param iLength
-   *          Bytes to jump
+   *
+   * @param iLength Bytes to jump
    */
   public void fill(final int iLength) {
     assureSpaceFor(iLength);
@@ -298,11 +307,9 @@ public class OMemoryStream extends OutputStream {
 
   /**
    * Fills the stream from current position writing iLength times the iFiller byte
-   * 
-   * @param iLength
-   *          Bytes to jump
-   * @param iFiller
-   *          Byte to use to fill the space
+   *
+   * @param iLength Bytes to jump
+   * @param iFiller Byte to use to fill the space
    */
   public void fill(final int iLength, final byte iFiller) {
     assureSpaceFor(iLength);
@@ -329,7 +336,6 @@ public class OMemoryStream extends OutputStream {
 
   /**
    * Browse the stream but just return the begin of the byte array. This is used to lazy load the information only when needed.
-   * 
    */
   public int getAsByteArrayOffset() {
     if (position >= buffer.length)
@@ -388,6 +394,13 @@ public class OMemoryStream extends OutputStream {
     return portion;
   }
 
+  /**
+   * Returns the available bytes to read.
+   */
+  public int available() {
+    return buffer.length - position;
+  }
+
   public String getAsString() {
     if (position >= buffer.length)
       return null;
@@ -396,13 +409,6 @@ public class OMemoryStream extends OutputStream {
     String str = new String(buffer, position, size, charset);
     position += size;
     return str;
-  }
-
-  public String getAsStringCustom() {
-    final int size = getVariableSize();
-    if (size < 0)
-      return null;
-    return OBinaryProtocol.bytes2string(this, size);
   }
 
   public boolean getAsBoolean() {

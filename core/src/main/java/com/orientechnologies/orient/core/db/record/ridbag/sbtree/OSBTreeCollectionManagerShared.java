@@ -1,55 +1,72 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 
 package com.orientechnologies.orient.core.db.record.ridbag.sbtree;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
-
 import com.orientechnologies.common.serialization.types.OIntegerSerializer;
-import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
+import com.orientechnologies.orient.core.OOrientShutdownListener;
+import com.orientechnologies.orient.core.OOrientStartupListener;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.db.record.ridbag.ORidBag;
 import com.orientechnologies.orient.core.index.sbtreebonsai.local.OSBTreeBonsai;
 import com.orientechnologies.orient.core.index.sbtreebonsai.local.OSBTreeBonsaiLocal;
 import com.orientechnologies.orient.core.serialization.serializer.binary.impl.OLinkSerializer;
 import com.orientechnologies.orient.core.storage.impl.local.OAbstractPaginatedStorage;
+import com.orientechnologies.orient.core.storage.impl.local.paginated.atomicoperations.OAtomicOperation;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 /**
- * @author <a href="mailto:enisher@gmail.com">Artem Orobets</a>
+ * @author Artem Orobets (enisher-at-gmail.com)
  */
-public class OSBTreeCollectionManagerShared extends OSBTreeCollectionManagerAbstract {
-  private ThreadLocal<Map<UUID, OBonsaiCollectionPointer>> collectionPointerChanges = new ThreadLocal<Map<UUID, OBonsaiCollectionPointer>>() {
-                                                                                      @Override
-                                                                                      protected Map<UUID, OBonsaiCollectionPointer> initialValue() {
-                                                                                        return new HashMap<UUID, OBonsaiCollectionPointer>();
-                                                                                      }
-                                                                                    };
+public class OSBTreeCollectionManagerShared extends OSBTreeCollectionManagerAbstract
+    implements OOrientStartupListener, OOrientShutdownListener {
+  private final OAbstractPaginatedStorage storage;
+  private volatile ThreadLocal<Map<UUID, OBonsaiCollectionPointer>> collectionPointerChanges = new CollectionPointerChangesThreadLocal();
 
-  public OSBTreeCollectionManagerShared() {
-    super();
+  public OSBTreeCollectionManagerShared(OAbstractPaginatedStorage storage) {
+    super(storage);
+
+    this.storage = storage;
   }
 
-  public OSBTreeCollectionManagerShared(int evictionThreshold, int cacheMaxSize) {
-    super(evictionThreshold, cacheMaxSize);
+  // for testing purposes
+  /* internal */ OSBTreeCollectionManagerShared(int evictionThreshold, int cacheMaxSize, OAbstractPaginatedStorage storage) {
+    super(storage, evictionThreshold, cacheMaxSize);
+
+    this.storage = storage;
+  }
+
+  @Override
+  public void onShutdown() {
+    collectionPointerChanges = null;
+    super.onShutdown();
+  }
+
+  @Override
+  public void onStartup() {
+    super.onStartup();
+    if (collectionPointerChanges == null)
+      collectionPointerChanges = new CollectionPointerChangesThreadLocal();
   }
 
   @Override
@@ -66,26 +83,38 @@ public class OSBTreeCollectionManagerShared extends OSBTreeCollectionManagerAbst
 
   @Override
   protected OSBTreeBonsaiLocal<OIdentifiable, Integer> createTree(int clusterId) {
-    OSBTreeBonsaiLocal<OIdentifiable, Integer> tree = new OSBTreeBonsaiLocal<OIdentifiable, Integer>(DEFAULT_EXTENSION, true);
-    tree.create(FILE_NAME_PREFIX + clusterId, OLinkSerializer.INSTANCE, OIntegerSerializer.INSTANCE);
+
+    OSBTreeBonsaiLocal<OIdentifiable, Integer> tree = new OSBTreeBonsaiLocal<OIdentifiable, Integer>(FILE_NAME_PREFIX + clusterId,
+        DEFAULT_EXTENSION, storage);
+    tree.create(OLinkSerializer.INSTANCE, OIntegerSerializer.INSTANCE);
 
     return tree;
   }
 
   @Override
   protected OSBTreeBonsai<OIdentifiable, Integer> loadTree(OBonsaiCollectionPointer collectionPointer) {
-    OSBTreeBonsaiLocal<OIdentifiable, Integer> tree = new OSBTreeBonsaiLocal<OIdentifiable, Integer>(DEFAULT_EXTENSION, true);
+    String fileName;
+    OAtomicOperation atomicOperation = storage.getAtomicOperationsManager().getCurrentOperation();
+    if (atomicOperation == null) {
+      fileName = storage.getWriteCache().fileNameById(collectionPointer.getFileId());
+    } else {
+      fileName = atomicOperation.fileNameById(collectionPointer.getFileId());
+    }
 
-    tree.load(collectionPointer.getFileId(), collectionPointer.getRootPointer(),
-        (OAbstractPaginatedStorage) ODatabaseRecordThreadLocal.INSTANCE.get().getStorage().getUnderlying());
+    OSBTreeBonsaiLocal<OIdentifiable, Integer> tree = new OSBTreeBonsaiLocal<OIdentifiable, Integer>(
+        fileName.substring(0, fileName.length() - DEFAULT_EXTENSION.length()), DEFAULT_EXTENSION, storage);
 
-    return tree;
+    if (tree.load(collectionPointer.getRootPointer()))
+      return tree;
+    else
+      return null;
   }
 
   /**
    * Change UUID to null to prevent its serialization to disk.
-   * 
+   *
    * @param collection
+   *
    * @return
    */
   @Override
@@ -115,5 +144,12 @@ public class OSBTreeCollectionManagerShared extends OSBTreeCollectionManagerAbst
 
   public void clearChangedIds() {
     collectionPointerChanges.get().clear();
+  }
+
+  private static class CollectionPointerChangesThreadLocal extends ThreadLocal<Map<UUID, OBonsaiCollectionPointer>> {
+    @Override
+    protected Map<UUID, OBonsaiCollectionPointer> initialValue() {
+      return new HashMap<UUID, OBonsaiCollectionPointer>();
+    }
   }
 }

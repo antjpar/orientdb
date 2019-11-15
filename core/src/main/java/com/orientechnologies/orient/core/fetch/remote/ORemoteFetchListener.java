@@ -20,6 +20,7 @@ import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.exception.OFetchException;
 import com.orientechnologies.orient.core.fetch.OFetchContext;
 import com.orientechnologies.orient.core.fetch.OFetchListener;
+import com.orientechnologies.orient.core.metadata.schema.OType;
 import com.orientechnologies.orient.core.record.ORecord;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 
@@ -32,6 +33,9 @@ import com.orientechnologies.orient.core.record.impl.ODocument;
  * 
  */
 public abstract class ORemoteFetchListener implements OFetchListener {
+  public boolean requireFieldProcessing() {
+    return false;
+  }
 
   public ORemoteFetchListener() {
   }
@@ -39,7 +43,7 @@ public abstract class ORemoteFetchListener implements OFetchListener {
   protected abstract void sendRecord(ORecord iLinked);
 
   public void processStandardField(ODocument iRecord, Object iFieldValue, String iFieldName, OFetchContext iContext,
-      final Object iusObject, final String iFormat) throws OFetchException {
+      final Object iusObject, final String iFormat, OType filedType) throws OFetchException {
   }
 
   public void parseLinked(ODocument iRootRecord, OIdentifiable iLinked, Object iUserObject, String iFieldName,
@@ -72,5 +76,10 @@ public abstract class ORemoteFetchListener implements OFetchListener {
       throws OFetchException {
     sendRecord(iLinked);
     return true;
+  }
+
+  @Override
+  public void skipStandardField(ODocument iRecord, String iFieldName, OFetchContext iContext, Object iUserObject, String iFormat)
+      throws OFetchException {
   }
 }

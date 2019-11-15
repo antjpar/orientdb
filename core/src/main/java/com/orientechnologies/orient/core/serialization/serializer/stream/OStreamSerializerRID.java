@@ -1,37 +1,38 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.serialization.serializer.stream;
 
-import com.orientechnologies.common.directmemory.ODirectMemoryPointer;
 import com.orientechnologies.common.serialization.types.OBinarySerializer;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.serialization.serializer.binary.impl.OLinkSerializer;
+import com.orientechnologies.orient.core.storage.impl.local.paginated.wal.OWALChanges;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 
 public class OStreamSerializerRID implements OStreamSerializer, OBinarySerializer<OIdentifiable> {
-  public static final String NAME = "p";
+  public static final String               NAME     = "p";
   public static final OStreamSerializerRID INSTANCE = new OStreamSerializerRID();
-  public static final byte ID = 16;
+  public static final byte                 ID       = 16;
 
   public String getName() {
     return NAME;
@@ -83,21 +84,6 @@ public class OStreamSerializerRID implements OStreamSerializer, OBinarySerialize
     return OLinkSerializer.INSTANCE.deserializeNativeObject(stream, startPosition);
   }
 
-  @Override
-  public void serializeInDirectMemoryObject(OIdentifiable object, ODirectMemoryPointer pointer, long offset, Object... hints) {
-    OLinkSerializer.INSTANCE.serializeInDirectMemoryObject(object, pointer, offset);
-  }
-
-  @Override
-  public OIdentifiable deserializeFromDirectMemoryObject(ODirectMemoryPointer pointer, long offset) {
-    return OLinkSerializer.INSTANCE.deserializeFromDirectMemoryObject(pointer, offset);
-  }
-
-  @Override
-  public int getObjectSizeInDirectMemory(ODirectMemoryPointer pointer, long offset) {
-    return OLinkSerializer.INSTANCE.getObjectSizeInDirectMemory(pointer, offset);
-  }
-
   public boolean isFixedLength() {
     return true;
   }
@@ -109,5 +95,45 @@ public class OStreamSerializerRID implements OStreamSerializer, OBinarySerialize
   @Override
   public OIdentifiable preprocess(OIdentifiable value, Object... hints) {
     return value;
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public void serializeInByteBufferObject(OIdentifiable object, ByteBuffer buffer, Object... hints) {
+    OLinkSerializer.INSTANCE.serializeInByteBufferObject(object, buffer);
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public OIdentifiable deserializeFromByteBufferObject(ByteBuffer buffer) {
+    return OLinkSerializer.INSTANCE.deserializeFromByteBufferObject(buffer);
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public int getObjectSizeInByteBuffer(ByteBuffer buffer) {
+    return OLinkSerializer.INSTANCE.getObjectSizeInByteBuffer(buffer);
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public OIdentifiable deserializeFromByteBufferObject(ByteBuffer buffer, OWALChanges walChanges, int offset) {
+    return OLinkSerializer.INSTANCE.deserializeFromByteBufferObject(buffer, walChanges, offset);
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public int getObjectSizeInByteBuffer(ByteBuffer buffer, OWALChanges walChanges, int offset) {
+    return OLinkSerializer.INSTANCE.getObjectSizeInByteBuffer(buffer, walChanges, offset);
   }
 }

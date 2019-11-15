@@ -1,56 +1,49 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 
 package com.orientechnologies.orient.core.storage.impl.local.paginated.wal;
-
-import com.orientechnologies.common.serialization.types.OLongSerializer;
 
 /**
  * @author Andrey Lomakin
  * @since 26.04.13
  */
 public class OUpdatePageRecord extends OAbstractPageWALRecord {
-  private OPageChanges pageChanges;
+  private OWALChanges changes;
 
   public OUpdatePageRecord() {
   }
 
   public OUpdatePageRecord(final long pageIndex, final long fileId, final OOperationUnitId operationUnitId,
-      final OPageChanges pageChanges, final OLogSequenceNumber prevLsn) {
+                           final OWALChanges changes) {
     super(pageIndex, fileId, operationUnitId);
-    this.pageChanges = pageChanges;
-    this.lsn = prevLsn;
-
-    assert prevLsn != null;
+    this.changes = changes;
   }
 
-  public OPageChanges getChanges() {
-    return pageChanges;
+  public OWALChanges getChanges() {
+    return changes;
   }
 
   @Override
   public int serializedSize() {
     int serializedSize = super.serializedSize();
-
-    serializedSize += 2 * OLongSerializer.LONG_SIZE;
-    serializedSize += pageChanges.serializedSize();
+    serializedSize += changes.serializedSize();
 
     return serializedSize;
   }
@@ -58,14 +51,7 @@ public class OUpdatePageRecord extends OAbstractPageWALRecord {
   @Override
   public int toStream(final byte[] content, int offset) {
     offset = super.toStream(content, offset);
-
-    OLongSerializer.INSTANCE.serializeNative(lsn.getPosition(), content, offset);
-    offset += OLongSerializer.LONG_SIZE;
-
-    OLongSerializer.INSTANCE.serializeNative(lsn.getSegment(), content, offset);
-    offset += OLongSerializer.LONG_SIZE;
-
-    offset = pageChanges.toStream(content, offset);
+    offset = changes.toStream(offset, content);
 
     return offset;
   }
@@ -74,16 +60,8 @@ public class OUpdatePageRecord extends OAbstractPageWALRecord {
   public int fromStream(final byte[] content, int offset) {
     offset = super.fromStream(content, offset);
 
-    final long position = OLongSerializer.INSTANCE.deserializeNative(content, offset);
-    offset += OLongSerializer.LONG_SIZE;
-
-    final long segment = OLongSerializer.INSTANCE.deserializeNative(content, offset);
-    offset += OLongSerializer.LONG_SIZE;
-
-    lsn = new OLogSequenceNumber(segment, position);
-
-    pageChanges = new OPageChanges();
-    offset = pageChanges.fromStream(content, offset);
+    changes = new OWALPageChangesPortion();
+    offset = changes.fromStream(offset, content);
 
     return offset;
   }
@@ -104,6 +82,15 @@ public class OUpdatePageRecord extends OAbstractPageWALRecord {
 
     final OUpdatePageRecord that = (OUpdatePageRecord) o;
 
+    if (lsn == null && that.lsn == null)
+      return true;
+
+    if (lsn == null)
+      return false;
+
+    if (that.lsn == null)
+      return false;
+
     if (!lsn.equals(that.lsn))
       return false;
 
@@ -115,10 +102,5 @@ public class OUpdatePageRecord extends OAbstractPageWALRecord {
     int result = super.hashCode();
     result = 31 * result + lsn.hashCode();
     return result;
-  }
-
-  @Override
-  public String toString() {
-    return toString("pageChanges=" + pageChanges);
   }
 }

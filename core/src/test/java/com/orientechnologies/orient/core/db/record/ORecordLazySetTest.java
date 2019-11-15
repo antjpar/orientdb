@@ -1,19 +1,20 @@
 package com.orientechnologies.orient.core.db.record;
 
-import static org.testng.Assert.assertEquals;
-import static org.testng.AssertJUnit.assertTrue;
-
-import java.util.Iterator;
-
-import com.orientechnologies.orient.core.command.traverse.OTraverse;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+import com.orientechnologies.orient.core.id.ORID;
+import com.orientechnologies.orient.core.id.ORecordId;
+import com.orientechnologies.orient.core.metadata.schema.OClass;
+import com.orientechnologies.orient.core.metadata.schema.OType;
+import com.orientechnologies.orient.core.record.impl.ODocument;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
-import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
-import com.orientechnologies.orient.core.id.ORID;
-import com.orientechnologies.orient.core.id.ORecordId;
-import com.orientechnologies.orient.core.record.impl.ODocument;
+import java.util.Iterator;
+
+import static org.testng.Assert.assertEquals;
+import static org.testng.AssertJUnit.assertFalse;
+import static org.testng.AssertJUnit.assertTrue;
 
 public class ORecordLazySetTest {
 
@@ -39,6 +40,7 @@ public class ORecordLazySetTest {
 
   @AfterClass
   public void after() {
+    db.activateOnCurrentThread();
     db.drop();
   }
 
@@ -101,6 +103,54 @@ public class ORecordLazySetTest {
       assertTrue(val.next() instanceof ORecordId);
     }
     assertEquals(set.size(), 3);
+  }
+
+  @Test()
+  public void testDocumentNotEmbedded() {
+    ORecordLazySet set = new ORecordLazySet(new ODocument());
+    ODocument doc = new ODocument();
+    set.add(doc);
+    assertFalse(doc.isEmbedded());
+  }
+
+  @Test()
+  public void testSetAddRemove() {
+    ORecordLazySet set = new ORecordLazySet(new ODocument());
+    ODocument doc = new ODocument();
+    set.add(doc);
+    set.remove(doc);
+    assertTrue(set.isEmpty());
+  }
+
+  @Test()
+  public void testSetRemoveNotPersistent() {
+    ORecordLazySet set = new ORecordLazySet(new ODocument());
+    set.add(doc1);
+    set.add(doc2);
+    set.add(new ORecordId(5, 1000));
+    assertEquals(set.size(), 3);
+    set.remove(null);
+    assertEquals(set.size(), 2);
+  }
+
+  @Test
+  public void testSetWithNotExistentRecordWithValidation() {
+    ODatabaseDocumentTx db = new ODatabaseDocumentTx("memory:testSetWithNotExistentRecordWithValidation");
+    db.create();
+    OClass test = db.getMetadata().getSchema().createClass("test");
+    OClass test1 = db.getMetadata().getSchema().createClass("test1");
+    test.createProperty("fi", OType.LINKSET).setLinkedClass(test1);
+    try {
+      ODocument doc = new ODocument(test);
+      ORecordLazySet set = new ORecordLazySet(doc);
+      set.add(new ORecordId(5, 1000));
+      doc.field("fi", set);
+      db.begin();
+      db.save(doc);
+      db.commit();
+    } finally {
+      db.drop();
+    }
   }
 
 }

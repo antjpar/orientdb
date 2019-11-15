@@ -16,11 +16,12 @@
 
 package com.orientechnologies.orient.core.metadata.schema;
 
-import java.util.Collection;
-import java.util.Set;
-
 import com.orientechnologies.orient.core.collate.OCollate;
 import com.orientechnologies.orient.core.index.OIndex;
+import com.orientechnologies.orient.core.record.impl.ODocument;
+
+import java.util.Collection;
+import java.util.Set;
 
 /**
  * Abstract Delegate for OProperty interface.
@@ -53,6 +54,17 @@ public class OPropertyAbstractDelegate implements OProperty {
   @Override
   public OProperty setName(final String iName) {
     delegate.setName(iName);
+    return this;
+  }
+  
+  @Override
+  public String getDescription() {
+    return delegate.getDescription();
+  }
+  
+  @Override
+  public OProperty setDescription(String iDescription) {
+    delegate.setDescription(iDescription);
     return this;
   }
 
@@ -143,6 +155,17 @@ public class OPropertyAbstractDelegate implements OProperty {
   }
 
   @Override
+  public String getDefaultValue() {
+    return delegate.getDefaultValue();
+  }
+
+  @Override
+  public OProperty setDefaultValue(final String defaultValue) {
+    delegate.setDefaultValue(defaultValue);
+    return this;
+  }
+
+  @Override
   public OIndex<?> createIndex(final OClass.INDEX_TYPE iType) {
     return delegate.createIndex(iType);
   }
@@ -152,22 +175,30 @@ public class OPropertyAbstractDelegate implements OProperty {
     return delegate.createIndex(iType);
   }
 
+  @Override public OIndex<?> createIndex(String iType, ODocument metadata) {
+    return delegate.createIndex(iType, metadata);
+  }
+
+  @Override public OIndex<?> createIndex(OClass.INDEX_TYPE iType, ODocument metadata) {
+    return delegate.createIndex(iType, metadata);
+  }
+
   @Override
   public OProperty setLinkedClass(OClass oClass) {
-	delegate.setLinkedClass(oClass);
-	return this;
+    delegate.setLinkedClass(oClass);
+    return this;
   }
 
   @Override
   public OProperty setLinkedType(OType type) {
-	delegate.setLinkedType(type);
-	return this;
+    delegate.setLinkedType(type);
+    return this;
   }
 
   @Override
   public OProperty setCollate(OCollate collate) {
-	delegate.setCollate(collate);
-	return this;
+    delegate.setCollate(collate);
+    return this;
   }
 
   @Override

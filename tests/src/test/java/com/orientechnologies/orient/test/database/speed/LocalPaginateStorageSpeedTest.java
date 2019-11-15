@@ -1,9 +1,5 @@
 package com.orientechnologies.orient.test.database.speed;
 
-import java.util.Date;
-
-import org.testng.annotations.Test;
-
 import com.orientechnologies.orient.core.Orient;
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
 import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
@@ -15,8 +11,10 @@ import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.serialization.serializer.record.binary.ORecordSerializerBinary;
 import com.orientechnologies.orient.core.storage.OStorage;
 import com.orientechnologies.orient.core.tx.OTransaction.TXTYPE;
-import com.orientechnologies.orient.core.version.OSimpleVersion;
 import com.orientechnologies.orient.test.database.base.OrientMonoThreadTest;
+import org.testng.annotations.Test;
+
+import java.util.Date;
 
 public class LocalPaginateStorageSpeedTest extends OrientMonoThreadTest {
   private ODatabaseDocumentInternal database;
@@ -73,7 +71,7 @@ public class LocalPaginateStorageSpeedTest extends OrientMonoThreadTest {
 
     content = record.toStream();
 
-    storage.createRecord(new ORecordId(), content, new OSimpleVersion(), (byte) 'd', 0, null);
+    storage.createRecord(new ORecordId(), content, 0, (byte) 'd', 0, null);
   }
 
   @Override
@@ -84,6 +82,7 @@ public class LocalPaginateStorageSpeedTest extends OrientMonoThreadTest {
     if (database != null)
       database.close();
     super.deinit();
+    OGlobalConfiguration.USE_WAL.setValue(true);
   }
 
 }

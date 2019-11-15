@@ -15,24 +15,23 @@
  */
 package com.orientechnologies.orient.test.database.auto;
 
-import com.orientechnologies.orient.core.metadata.schema.OSchema;
-import com.orientechnologies.orient.core.storage.impl.local.paginated.OClusterPositionMap;
-import com.orientechnologies.orient.core.storage.impl.local.paginated.OPaginatedCluster;
+import java.io.File;
+import java.util.Collection;
+import java.util.Locale;
+
 import org.testng.Assert;
 import org.testng.annotations.Optional;
 import org.testng.annotations.Parameters;
 import org.testng.annotations.Test;
 
 import com.orientechnologies.orient.core.command.script.OCommandScript;
-import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
-import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
+import com.orientechnologies.orient.core.metadata.schema.OSchema;
 import com.orientechnologies.orient.core.metadata.schema.OType;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.sql.OCommandSQL;
-
-import java.io.File;
-import java.util.Collection;
+import com.orientechnologies.orient.core.storage.impl.local.paginated.OClusterPositionMap;
+import com.orientechnologies.orient.core.storage.impl.local.paginated.OPaginatedCluster;
 
 @Test(groups = "sql-delete", sequential = true)
 public class SQLCommandsTest extends DocumentDBBaseTest {
@@ -100,18 +99,18 @@ public class SQLCommandsTest extends DocumentDBBaseTest {
       return;
 
     Collection<String> names = database.getClusterNames();
-    Assert.assertFalse(names.contains("testClusterRename".toLowerCase()));
+    Assert.assertFalse(names.contains("testClusterRename".toLowerCase(Locale.ENGLISH)));
 
-    database.command(new OCommandSQL("create cluster testClusterRename physical")).execute();
+    database.command(new OCommandSQL("create cluster testClusterRename")).execute();
 
     names = database.getClusterNames();
-    Assert.assertTrue(names.contains("testClusterRename".toLowerCase()));
+    Assert.assertTrue(names.contains("testClusterRename".toLowerCase(Locale.ENGLISH)));
 
     database.command(new OCommandSQL("alter cluster testClusterRename name testClusterRename42")).execute();
     names = database.getClusterNames();
 
-    Assert.assertTrue(names.contains("testClusterRename42".toLowerCase()));
-    Assert.assertFalse(names.contains("testClusterRename".toLowerCase()));
+    Assert.assertTrue(names.contains("testClusterRename42".toLowerCase(Locale.ENGLISH)));
+    Assert.assertFalse(names.contains("testClusterRename".toLowerCase(Locale.ENGLISH)));
 
     if (database.getURL().startsWith("plocal:")) {
       String storagePath = database.getStorage().getConfiguration().getDirectory();

@@ -1,32 +1,31 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.cache;
-
-import static com.orientechnologies.orient.core.metadata.OMetadataDefault.CLUSTER_INDEX_NAME;
 
 import com.orientechnologies.orient.core.Orient;
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
-import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.record.ORecord;
+import com.orientechnologies.orient.core.record.ORecordVersionHelper;
 
 /**
  * Local cache. it's one to one with record database instances. It is needed to avoid cases when several instances of the same
@@ -38,13 +37,13 @@ public class OLocalRecordCache extends OAbstractRecordCache {
   private String CACHE_HIT;
   private String CACHE_MISS;
 
-  public OLocalRecordCache(OCacheLevelOneLocator cacheLocator) {
-    super(cacheLocator.threadLocalCache());
+  public OLocalRecordCache() {
+    super(Orient.instance().getLocalRecordCache().newInstance(OGlobalConfiguration.CACHE_LOCAL_IMPL.getValueAsString()));
   }
 
   @Override
   public void startup() {
-    ODatabaseRecord db = ODatabaseRecordThreadLocal.INSTANCE.get();
+    ODatabaseDocument db = ODatabaseRecordThreadLocal.INSTANCE.get();
 
     profilerPrefix = "db." + db.getName() + ".cache.level1.";
     profilerMetadataPrefix = "db.*.cache.level1.";
@@ -52,10 +51,7 @@ public class OLocalRecordCache extends OAbstractRecordCache {
     CACHE_HIT = profilerPrefix + "cache.found";
     CACHE_MISS = profilerPrefix + "cache.notFound";
 
-    excludedCluster = db.getClusterIdByName(CLUSTER_INDEX_NAME);
-
     super.startup();
-    setEnable(OGlobalConfiguration.CACHE_LOCAL_ENABLED.getValueAsBoolean());
   }
 
   /**
@@ -65,8 +61,8 @@ public class OLocalRecordCache extends OAbstractRecordCache {
    *          record that should be cached
    */
   public void updateRecord(final ORecord record) {
-    if (isEnabled() && record.getIdentity().getClusterId() != excludedCluster && record.getIdentity().isValid()
-        && !record.getRecordVersion().isTombstone()) {
+    if (record.getIdentity().getClusterId() != excludedCluster && record.getIdentity().isValid() && !record.isDirty()
+        && !ORecordVersionHelper.isTombstone(record.getVersion())) {
       if (underlying.get(record.getIdentity()) != record)
         underlying.put(record);
     }
@@ -80,19 +76,14 @@ public class OLocalRecordCache extends OAbstractRecordCache {
    * @return record stored in cache if any, otherwise - {@code null}
    */
   public ORecord findRecord(final ORID rid) {
-    if (!isEnabled()) {
-      return null;
-    }
-    // DELEGATE TO THE 2nd LEVEL CACHE
-
     ORecord record;
     record = underlying.get(rid);
 
     if (record != null)
       Orient.instance().getProfiler().updateCounter(CACHE_HIT, "Record found in Level1 Cache", 1L, "db.*.cache.level1.cache.found");
     else
-      Orient.instance().getProfiler()
-          .updateCounter(CACHE_MISS, "Record not found in Level1 Cache", 1L, "db.*.cache.level1.cache.notFound");
+      Orient.instance().getProfiler().updateCounter(CACHE_MISS, "Record not found in Level1 Cache", 1L,
+          "db.*.cache.level1.cache.notFound");
 
     return record;
   }
@@ -125,6 +116,6 @@ public class OLocalRecordCache extends OAbstractRecordCache {
 
   @Override
   public String toString() {
-    return "DB level1 cache records = " + getSize() + ", maxSize= " + getMaxSize();
+    return "DB level cache records = " + getSize();
   }
 }

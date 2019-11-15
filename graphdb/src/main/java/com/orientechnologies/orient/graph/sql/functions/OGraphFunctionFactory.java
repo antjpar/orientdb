@@ -15,6 +15,7 @@
  */
 package com.orientechnologies.orient.graph.sql.functions;
 
+import com.orientechnologies.common.exception.OException;
 import com.orientechnologies.orient.core.exception.OCommandExecutionException;
 import com.orientechnologies.orient.core.sql.functions.OSQLFunction;
 import com.orientechnologies.orient.core.sql.functions.OSQLFunctionFactory;
@@ -35,6 +36,7 @@ public class OGraphFunctionFactory implements OSQLFunctionFactory {
   static {
     register(OSQLFunctionGremlin.NAME, OSQLFunctionGremlin.class);
     register(OSQLFunctionDijkstra.NAME, new OSQLFunctionDijkstra());
+    register(OSQLFunctionAstar.NAME, OSQLFunctionAstar.class);
     register(OSQLFunctionShortestPath.NAME, new OSQLFunctionShortestPath());
 
     register(OSQLFunctionLabel.NAME, new OSQLFunctionLabel());
@@ -58,11 +60,11 @@ public class OGraphFunctionFactory implements OSQLFunctionFactory {
   }
 
   public boolean hasFunction(final String name) {
-    return FUNCTIONS.containsKey(name.toLowerCase());
+    return FUNCTIONS.containsKey(name.toLowerCase(Locale.ENGLISH));
   }
 
   public OSQLFunction createFunction(final String name) {
-    final Object obj = FUNCTIONS.get(name.toLowerCase());
+    final Object obj = FUNCTIONS.get(name.toLowerCase(Locale.ENGLISH));
 
     if (obj == null)
       throw new OCommandExecutionException("Unknown function name :" + name);
@@ -75,8 +77,8 @@ public class OGraphFunctionFactory implements OSQLFunctionFactory {
       try {
         return (OSQLFunction) clazz.newInstance();
       } catch (Exception e) {
-        throw new OCommandExecutionException("Error in creation of function " + name
-            + "(). Probably there is not an empty constructor or the constructor generates errors", e);
+        throw OException.wrapException(new OCommandExecutionException("Error in creation of function " + name
+            + "(). Probably there is not an empty constructor or the constructor generates errors"), e);
       }
     }
   }

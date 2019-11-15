@@ -1,65 +1,65 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.sql.functions.stat;
-
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
 
 import com.orientechnologies.common.collection.OMultiValue;
 import com.orientechnologies.orient.core.command.OCommandContext;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.sql.functions.OSQLFunctionAbstract;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
 /**
  * Compute the variance estimation for a given field.
- * 
+ * <p>
  * This class uses the Weldford's algorithm (presented in Donald Knuth's Art of Computer Programming) to avoid multiple distribution
  * values' passes. When executed in distributed mode it uses the Chan at al. pairwise variance algorithm to merge the results.
- * 
+ * <p>
  * <p>
  * <b>References</b>
  * </p>
- *
+ * <p>
  * <ul>
- * 
+ * <p>
  * <li>Cook, John D. <a href="http://www.johndcook.com/standard_deviation.html">Accurately computing running variance</a>.</li>
- *
+ * <p>
  * <li>Knuth, Donald E. (1998) <i>The Art of Computer Programming, Volume 2: Seminumerical Algorithms, 3rd Edition.</i></li>
- *
+ * <p>
  * <li>Welford, B. P. (1962) Note on a method for calculating corrected sums of squares and products. <i>Technometrics</i></li>
- * 
+ * <p>
  * <li>Chan, Tony F.; Golub, Gene H.; LeVeque, Randall J. (1979), <a
  * href="http://cpsc.yale.edu/sites/default/files/files/tr222.pdf">Parallel Algorithm</a>.</li>
- *
+ * <p>
  * </ul>
- * 
+ *
  * @author Fabrizio Fortino
  */
 public class OSQLFunctionVariance extends OSQLFunctionAbstract {
 
   public static final String NAME = "variance";
 
-  private long               n;
-  private double             mean;
-  private double             m2;
+  private long   n;
+  private double mean;
+  private double m2;
 
   public OSQLFunctionVariance() {
     super(NAME, 1, 1);
@@ -103,31 +103,37 @@ public class OSQLFunctionVariance extends OSQLFunctionAbstract {
   @SuppressWarnings("unchecked")
   @Override
   public Object mergeDistributedResult(List<Object> resultsToMerge) {
-    long dN = 0;
-    double dMean = 0;
-    Double var = null;
-    for (Object iParameter : resultsToMerge) {
-      final Map<String, Object> item = (Map<String, Object>) iParameter;
-      if (dN == 0) { // first element
-        dN = (Long) item.get("n");
-        dMean = (Double) item.get("mean");
-        var = (Double) item.get("var");
-      } else {
-        long rhsN = (Long) item.get("n");
-        double rhsMean = (Double) item.get("mean");
-        double rhsVar = (Double) item.get("var");
+    if (returnDistributedResult()) {
+      long dN = 0;
+      double dMean = 0;
+      Double var = null;
+      for (Object iParameter : resultsToMerge) {
+        final Map<String, Object> item = (Map<String, Object>) iParameter;
+        if (dN == 0) { // first element
+          dN = (Long) item.get("n");
+          dMean = (Double) item.get("mean");
+          var = (Double) item.get("var");
+        } else {
+          long rhsN = (Long) item.get("n");
+          double rhsMean = (Double) item.get("mean");
+          double rhsVar = (Double) item.get("var");
 
-        long totalN = dN + rhsN;
-        double totalMean = ((dMean * dN) + (rhsMean * rhsN)) / totalN;
+          long totalN = dN + rhsN;
+          double totalMean = ((dMean * dN) + (rhsMean * rhsN)) / totalN;
 
-        var = (((dN * var) + (rhsN * rhsVar)) / totalN) + ((dN * rhsN) * Math.pow((rhsMean - dMean) / totalN, 2));
-        dN = totalN;
-        dMean = totalMean;
+          var = (((dN * var) + (rhsN * rhsVar)) / totalN) + ((dN * rhsN) * Math.pow((rhsMean - dMean) / totalN, 2));
+          dN = totalN;
+          dMean = totalMean;
+        }
+
       }
-
+      return var;
     }
 
-    return var;
+    if (!resultsToMerge.isEmpty())
+      return resultsToMerge.get(0);
+
+    return null;
   }
 
   @Override

@@ -1,50 +1,45 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.index;
 
-import java.lang.reflect.InvocationTargetException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-
+import com.orientechnologies.common.exception.OException;
 import com.orientechnologies.orient.core.collate.OCollate;
 import com.orientechnologies.orient.core.db.record.OMultiValueChangeEvent;
 import com.orientechnologies.orient.core.db.record.ORecordElement;
 import com.orientechnologies.orient.core.metadata.schema.OType;
 import com.orientechnologies.orient.core.record.impl.ODocument;
+import com.orientechnologies.orient.core.sql.OCommandExecutorSQLCreateIndex;
+
+import java.lang.reflect.InvocationTargetException;
+import java.util.*;
 
 /**
  * Index that consist of several indexDefinitions like {@link OPropertyIndexDefinition}.
  */
 
 public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
+  private static final long serialVersionUID = -885861736290603016L;
   private final List<OIndexDefinition> indexDefinitions;
-  private String                       className;
-  private int                          multiValueDefinitionIndex = -1;
-  private OCompositeCollate            collate                   = new OCompositeCollate();
+  private       String                 className;
+  private int               multiValueDefinitionIndex = -1;
+  private OCompositeCollate collate                   = new OCompositeCollate(this);
 
   public OCompositeIndexDefinition() {
     indexDefinitions = new ArrayList<OIndexDefinition>(5);
@@ -52,24 +47,25 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
 
   /**
    * Constructor for new index creation.
-   * 
-   * @param iClassName
-   *          - name of class which is owner of this index
+   *
+   * @param iClassName - name of class which is owner of this index
    */
   public OCompositeIndexDefinition(final String iClassName) {
+    super();
+
     indexDefinitions = new ArrayList<OIndexDefinition>(5);
     className = iClassName;
   }
 
   /**
    * Constructor for new index creation.
-   * 
-   * @param iClassName
-   *          - name of class which is owner of this index
-   * @param iIndexes
-   *          List of indexDefinitions to add in given index.
+   *
+   * @param iClassName - name of class which is owner of this index
+   * @param iIndexes   List of indexDefinitions to add in given index.
    */
-  public OCompositeIndexDefinition(final String iClassName, final List<? extends OIndexDefinition> iIndexes) {
+  public OCompositeIndexDefinition(final String iClassName, final List<? extends OIndexDefinition> iIndexes, int version) {
+    super();
+
     indexDefinitions = new ArrayList<OIndexDefinition>(5);
     for (OIndexDefinition indexDefinition : iIndexes) {
       indexDefinitions.add(indexDefinition);
@@ -79,7 +75,7 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
         if (multiValueDefinitionIndex == -1)
           multiValueDefinitionIndex = indexDefinitions.size() - 1;
         else
-          throw new OIndexException("Composite key can not contain more than one collection item");
+          throw new OIndexException("Composite key cannot contain more than one collection item");
     }
 
     className = iClassName;
@@ -94,9 +90,8 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
 
   /**
    * Add new indexDefinition in current composite.
-   * 
-   * @param indexDefinition
-   *          Index to add.
+   *
+   * @param indexDefinition Index to add.
    */
   public void addIndex(final OIndexDefinition indexDefinition) {
     indexDefinitions.add(indexDefinition);
@@ -104,7 +99,7 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
       if (multiValueDefinitionIndex == -1)
         multiValueDefinitionIndex = indexDefinitions.size() - 1;
       else
-        throw new OIndexException("Composite key can not contain more than one collection item");
+        throw new OIndexException("Composite key cannot contain more than one collection item");
     }
 
     collate.addCollate(indexDefinition.getCollate());
@@ -146,6 +141,10 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
       final Object result = indexDefinition.getDocumentValueToIndex(iDocument);
 
       if (result == null && isNullValuesIgnored())
+        return null;
+
+      //for empty collections we add null key in index
+      if (result instanceof Collection && ((Collection) result).isEmpty() && isNullValuesIgnored())
         return null;
 
       containsCollection = addKey(firstKey, compositeKeys, containsCollection, result);
@@ -196,6 +195,10 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
       final Object keyValue = indexDefinition.createValue(indexParams);
 
       if (keyValue == null && isNullValuesIgnored())
+        return null;
+
+      //for empty collections we add null key in index
+      if (keyValue instanceof Collection && ((Collection) keyValue).isEmpty() && isNullValuesIgnored())
         return null;
 
       containsCollection = addKey(firstKey, compositeKeys, containsCollection, keyValue);
@@ -249,22 +252,41 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
 
   private static boolean addKey(OCompositeKey firstKey, List<OCompositeKey> compositeKeys, boolean containsCollection,
       Object keyValue) {
+    //in case of collection we split single composite key on several composite keys
+    //each of those composite keys contain single collection item.
+    //we can not contain more than single collection item in index
     if (keyValue instanceof Collection) {
       final Collection<?> collectionKey = (Collection<?>) keyValue;
+      final int collectionSize;
+
+      //we insert null if collection is empty
+      if (collectionKey.isEmpty())
+        collectionSize = 1;
+      else
+        collectionSize = collectionKey.size();
+
+      //if that is first collection we split single composite key on several keys, each of those
+      //composite keys contain single item from collection
       if (!containsCollection)
-        for (int i = 1; i < collectionKey.size(); i++) {
+        //sure we need to expand collection only if collection size more than one, otherwise
+        //collection of composite keys already contains original composite key
+        for (int i = 1; i < collectionSize; i++) {
           final OCompositeKey compositeKey = new OCompositeKey(firstKey.getKeys());
           compositeKeys.add(compositeKey);
         }
       else
-        throw new OIndexException("Composite key can not contain more than one collection item");
+        throw new OIndexException("Composite key cannot contain more than one collection item");
 
       int compositeIndex = 0;
-      for (final Object keyItem : collectionKey) {
-        final OCompositeKey compositeKey = compositeKeys.get(compositeIndex);
-        compositeKey.addKey(keyItem);
+      if (!collectionKey.isEmpty()) {
+        for (final Object keyItem : collectionKey) {
+          final OCompositeKey compositeKey = compositeKeys.get(compositeIndex);
+          compositeKey.addKey(keyItem);
 
-        compositeIndex++;
+          compositeIndex++;
+        }
+      } else {
+        firstKey.addKey(null);
       }
 
       containsCollection = true;
@@ -281,6 +303,9 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
    * {@inheritDoc}
    */
   public Object createValue(final Object... params) {
+    if (params.length == 1 && params[0] instanceof Collection)
+      return params[0];
+
     return createValue(Arrays.asList(params));
   }
 
@@ -355,20 +380,8 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
   @Override
   public ODocument toStream() {
     document.setInternalStatus(ORecordElement.STATUS.UNMARSHALLING);
-    final List<ODocument> inds = new ArrayList<ODocument>(indexDefinitions.size());
-    final List<String> indClasses = new ArrayList<String>(indexDefinitions.size());
-
     try {
-      document.field("className", className);
-      for (final OIndexDefinition indexDefinition : indexDefinitions) {
-        final ODocument indexDocument = indexDefinition.toStream();
-        inds.add(indexDocument);
-
-        indClasses.add(indexDefinition.getClass().getName());
-      }
-      document.field("indexDefinitions", inds, OType.EMBEDDEDLIST);
-      document.field("indClasses", indClasses, OType.EMBEDDEDLIST);
-      document.field("nullValuesIgnored", isNullValuesIgnored());
+      serializeToStream();
     } finally {
       document.setInternalStatus(ORecordElement.STATUS.LOADED);
     }
@@ -376,10 +389,29 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
     return document;
   }
 
+  @Override
+  protected void serializeToStream() {
+    super.serializeToStream();
+
+    final List<ODocument> inds = new ArrayList<ODocument>(indexDefinitions.size());
+    final List<String> indClasses = new ArrayList<String>(indexDefinitions.size());
+
+    document.field("className", className);
+    for (final OIndexDefinition indexDefinition : indexDefinitions) {
+      final ODocument indexDocument = indexDefinition.toStream();
+      inds.add(indexDocument);
+
+      indClasses.add(indexDefinition.getClass().getName());
+    }
+    document.field("indexDefinitions", inds, OType.EMBEDDEDLIST);
+    document.field("indClasses", indClasses, OType.EMBEDDEDLIST);
+    document.field("nullValuesIgnored", isNullValuesIgnored());
+  }
+
   /**
    * {@inheritDoc}
    */
-  public String toCreateIndexDDL(final String indexName, final String indexType) {
+  public String toCreateIndexDDL(final String indexName, final String indexType, String engine) {
     final StringBuilder ddl = new StringBuilder("create index ");
     ddl.append(indexName).append(" on ").append(className).append(" ( ");
 
@@ -391,6 +423,9 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
       }
     }
     ddl.append(" ) ").append(indexType).append(' ');
+
+    if (engine != null)
+      ddl.append(OCommandExecutorSQLCreateIndex.KEYWORD_ENGINE + " " + engine).append(' ');
 
     if (multiValueDefinitionIndex == -1) {
       boolean first = true;
@@ -412,6 +447,13 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
    */
   @Override
   protected void fromStream() {
+    serializeFromStream();
+  }
+
+  @Override
+  protected void serializeFromStream() {
+    super.serializeFromStream();
+
     try {
       className = document.field("className");
 
@@ -420,7 +462,7 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
 
       indexDefinitions.clear();
 
-      collate = new OCompositeCollate();
+      collate = new OCompositeCollate(this);
 
       for (int i = 0; i < indClasses.size(); i++) {
         final Class<?> clazz = Class.forName(indClasses.get(i));
@@ -436,17 +478,17 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
           multiValueDefinitionIndex = indexDefinitions.size() - 1;
       }
 
-      setNullValuesIgnored(!Boolean.FALSE.equals(document.<Boolean> field("nullValuesIgnored")));
+      setNullValuesIgnored(!Boolean.FALSE.equals(document.<Boolean>field("nullValuesIgnored")));
     } catch (final ClassNotFoundException e) {
-      throw new OIndexException("Error during composite index deserialization", e);
+      throw OException.wrapException(new OIndexException("Error during composite index deserialization"), e);
     } catch (final NoSuchMethodException e) {
-      throw new OIndexException("Error during composite index deserialization", e);
+      throw OException.wrapException(new OIndexException("Error during composite index deserialization"), e);
     } catch (final InvocationTargetException e) {
-      throw new OIndexException("Error during composite index deserialization", e);
+      throw OException.wrapException(new OIndexException("Error during composite index deserialization"), e);
     } catch (final InstantiationException e) {
-      throw new OIndexException("Error during composite index deserialization", e);
+      throw OException.wrapException(new OIndexException("Error during composite index deserialization"), e);
     } catch (final IllegalAccessException e) {
-      throw new OIndexException("Error during composite index deserialization", e);
+      throw OException.wrapException(new OIndexException("Error during composite index deserialization"), e);
     }
   }
 
@@ -544,72 +586,5 @@ public class OCompositeIndexDefinition extends OAbstractIndexDefinition {
   @Override
   public boolean isAutomatic() {
     return indexDefinitions.get(0).isAutomatic();
-  }
-
-  private final class OCompositeCollate implements OCollate {
-    private final List<OCollate> collates = new ArrayList<OCollate>();
-
-    public void addCollate(OCollate collate) {
-      collates.add(collate);
-    }
-
-    @Override
-    public String getName() {
-      throw new UnsupportedOperationException("getName");
-    }
-
-    @SuppressWarnings("unchecked")
-    @Override
-    public Object transform(Object obj) {
-      List<Object> keys = null;
-      if (obj instanceof OCompositeKey) {
-        final OCompositeKey compositeKey = (OCompositeKey) obj;
-        keys = compositeKey.getKeys();
-      } else if (obj instanceof List) {
-        keys = (List<Object>) obj;
-      } else {
-        throw new OIndexException("Impossible add as key of a CompositeIndex a value of type " + obj.getClass());
-      }
-
-      OCompositeKey transformedKey = new OCompositeKey();
-
-      final int size = Math.min(keys.size(), collates.size());
-      for (int i = 0; i < size; i++) {
-        final Object key = keys.get(i);
-
-        final OCollate collate = collates.get(i);
-        transformedKey.addKey(collate.transform(key));
-      }
-
-      for (int i = size; i < keys.size(); i++)
-        transformedKey.addKey(keys.get(i));
-
-      return transformedKey;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-      if (this == o)
-        return true;
-      if (o == null || getClass() != o.getClass())
-        return false;
-
-      OCompositeCollate that = (OCompositeCollate) o;
-
-      if (!collates.equals(that.collates))
-        return false;
-
-      return true;
-    }
-
-    @Override
-    public int hashCode() {
-      return collates.hashCode();
-    }
-
-    @Override
-    public String toString() {
-      return "OCompositeCollate{" + "collates=" + collates + ", null values ignored = " + isNullValuesIgnored() + '}';
-    }
   }
 }

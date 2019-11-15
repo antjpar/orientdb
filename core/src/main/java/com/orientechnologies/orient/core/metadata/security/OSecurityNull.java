@@ -1,26 +1,27 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.metadata.security;
 
+import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
-import com.orientechnologies.orient.core.metadata.security.ORole.ALLOW_MODES;
+import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 
 import java.util.List;
@@ -33,10 +34,32 @@ import java.util.Set;
  * 
  */
 public class OSecurityNull implements OSecurity {
+  public OSecurityNull(final OSecurity iDelegate, final ODatabaseDocumentInternal iDatabase) {
+  }
 
   @Override
   public boolean isAllowed(final Set<OIdentifiable> iAllowAll, final Set<OIdentifiable> iAllowOperation) {
     return true;
+  }
+
+  @Override
+  public OIdentifiable allowUser(ODocument iDocument, ORestrictedOperation iOperationType, String iUserName) {
+    return null;
+  }
+
+  @Override
+  public OIdentifiable allowRole(ODocument iDocument, ORestrictedOperation iOperationType, String iRoleName) {
+    return null;
+  }
+
+  @Override
+  public OIdentifiable denyUser(ODocument iDocument, ORestrictedOperation iOperationType, String iUserName) {
+    return null;
+  }
+
+  @Override
+  public OIdentifiable denyRole(ODocument iDocument, ORestrictedOperation iOperationType, String iRoleName) {
+    return null;
   }
 
   public OUser create() {
@@ -47,6 +70,10 @@ public class OSecurityNull implements OSecurity {
   }
 
   public OUser getUser(String iUserName) {
+    return null;
+  }
+
+  public OUser getUser(ORID iUserId) {
     return null;
   }
 
@@ -66,11 +93,11 @@ public class OSecurityNull implements OSecurity {
     return null;
   }
 
-  public ORole createRole(String iRoleName, ALLOW_MODES iAllowMode) {
+  public ORole createRole(String iRoleName, OSecurityRole.ALLOW_MODES iAllowMode) {
     return null;
   }
 
-  public ORole createRole(String iRoleName, ORole iParent, ALLOW_MODES iAllowMode) {
+  public ORole createRole(String iRoleName, ORole iParent, OSecurityRole.ALLOW_MODES iAllowMode) {
     return null;
   }
 
@@ -83,6 +110,10 @@ public class OSecurityNull implements OSecurity {
   }
 
   public OUser authenticate(String iUsername, String iUserPassword) {
+    return null;
+  }
+
+  public OUser authenticate(OToken authToken) {
     return null;
   }
 
@@ -138,5 +169,14 @@ public class OSecurityNull implements OSecurity {
   @Override
   public OSecurity getUnderlying() {
     return null;
+  }
+
+  @Override
+  public long getVersion() {
+    return 0;
+  }
+
+  @Override
+  public void incrementVersion() {
   }
 }

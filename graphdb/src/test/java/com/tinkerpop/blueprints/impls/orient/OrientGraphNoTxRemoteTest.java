@@ -2,6 +2,7 @@ package com.tinkerpop.blueprints.impls.orient;
 
 import com.orientechnologies.orient.client.remote.OServerAdmin;
 import com.orientechnologies.orient.core.Orient;
+import com.orientechnologies.orient.core.config.OGlobalConfiguration;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.server.OServer;
 import com.orientechnologies.orient.server.OServerMain;
@@ -28,20 +29,22 @@ import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /**
- * @author Andrey Lomakin <a href="mailto:lomakin.andrey@gmail.com">Andrey Lomakin</a>
+ * @author Andrey Lomakin (a.lomakin-at-orientechnologies.com)
  * @since 2/6/14
  */
 @RunWith(JUnit4.class)
 public class OrientGraphNoTxRemoteTest extends GraphTest {
-  private static OServer                  server;
-  private static String                   oldOrientDBHome;
+  private static final String serverPort = System.getProperty("orient.server.port", "3080");
+  private static OServer server;
+  private static String  oldOrientDBHome;
 
-  private static String                   serverHome;
+  private static String serverHome;
 
-  private Map<String, OrientGraphNoTx>    currentGraphs  = new HashMap<String, OrientGraphNoTx>();
+  private Map<String, OrientGraphNoTx> currentGraphs = new HashMap<String, OrientGraphNoTx>();
 
   private Map<String, OrientGraphFactory> graphFactories = new HashMap<String, OrientGraphFactory>();
 
@@ -59,7 +62,7 @@ public class OrientGraphNoTxRemoteTest extends GraphTest {
     oldOrientDBHome = System.getProperty("ORIENTDB_HOME");
     System.setProperty("ORIENTDB_HOME", serverHome);
 
-    server = OServerMain.create();
+    server = new OServer(false);
     server.startup(OrientGraphRemoteTest.class.getResourceAsStream("/embedded-server-config.xml"));
     server.activate();
   }
@@ -68,6 +71,7 @@ public class OrientGraphNoTxRemoteTest extends GraphTest {
   public static void stopEmbeddedServer() throws Exception {
     server.shutdown();
     Thread.sleep(1000);
+    Orient.instance().closeAllStorages();
 
     if (oldOrientDBHome != null)
       System.setProperty("ORIENTDB_HOME", oldOrientDBHome);
@@ -76,13 +80,13 @@ public class OrientGraphNoTxRemoteTest extends GraphTest {
 
     final File file = new File(serverHome);
     deleteDirectory(file);
-
+    OGlobalConfiguration.NETWORK_LOCK_TIMEOUT.setValue(15000);
     Orient.instance().startup();
   }
 
   @Before
   public void setUp() throws Exception {
-    Assume.assumeThat(System.getProperty("orientdb.test.env", "dev").toUpperCase(), IsEqual.equalTo("RELEASE"));
+    Assume.assumeThat(System.getProperty("orientdb.test.env", "dev").toUpperCase(Locale.ENGLISH), IsEqual.equalTo("RELEASE"));
     super.setUp();
   }
 
@@ -135,7 +139,7 @@ public class OrientGraphNoTxRemoteTest extends GraphTest {
   }
 
   public Graph generateGraph(final String graphDirectoryName) {
-    final String url = "remote:localhost:3080/" + graphDirectoryName;
+    final String url = "remote:localhost:" + serverPort + "/" + graphDirectoryName;
     OrientGraphNoTx graph = currentGraphs.get(url);
 
     if (graph != null) {
@@ -162,13 +166,13 @@ public class OrientGraphNoTxRemoteTest extends GraphTest {
     OrientGraphFactory factory = graphFactories.get(url);
     if (factory == null) {
       factory = new OrientGraphFactory(url);
-      factory.setTransactional(false);
       factory.setupPool(5, 256);
       graphFactories.put(url, factory);
     }
 
     graph = factory.getNoTx();
     graph.setWarnOnForceClosingTx(false);
+    graph.setStandardExceptions(true);
 
     currentGraphs.put(url, graph);
 
@@ -180,7 +184,7 @@ public class OrientGraphNoTxRemoteTest extends GraphTest {
     // this is necessary on windows systems: deleting the directory is not enough because it takes a
     // while to unlock files
     try {
-      final String url = "remote:localhost:3080/" + graphDirectoryName;
+      final String url = "remote:localhost:" + serverPort + "/" + graphDirectoryName;
       final OrientGraphNoTx graph = currentGraphs.get(url);
       if (graph != null)
         graph.shutdown();

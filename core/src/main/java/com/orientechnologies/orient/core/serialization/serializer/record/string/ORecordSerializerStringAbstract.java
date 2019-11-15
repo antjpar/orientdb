@@ -1,36 +1,32 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.serialization.serializer.record.string;
 
-import java.io.Serializable;
-import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.Calendar;
-import java.util.Date;
-import java.util.HashSet;
-import java.util.Set;
-
-import com.orientechnologies.common.profiler.OProfilerMBean;
+import com.orientechnologies.common.exception.OException;
+import com.orientechnologies.common.io.OIOUtils;
+import com.orientechnologies.common.profiler.OProfiler;
 import com.orientechnologies.orient.core.Orient;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.db.OUserObject2RecordHandler;
+import com.orientechnologies.orient.core.db.record.OIdentifiable;
+import com.orientechnologies.orient.core.exception.OSchemaException;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.metadata.schema.OType;
@@ -38,20 +34,23 @@ import com.orientechnologies.orient.core.record.ORecord;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.record.impl.ODocumentInternal;
 import com.orientechnologies.orient.core.serialization.OBase64Utils;
-import com.orientechnologies.orient.core.serialization.OBinaryProtocol;
 import com.orientechnologies.orient.core.serialization.serializer.OStringSerializerHelper;
 import com.orientechnologies.orient.core.serialization.serializer.record.ORecordSerializer;
-import com.orientechnologies.orient.core.serialization.serializer.record.OSerializationSetThreadLocal;
 import com.orientechnologies.orient.core.serialization.serializer.string.OStringSerializerAnyStreamable;
 import com.orientechnologies.orient.core.serialization.serializer.string.OStringSerializerEmbedded;
 import com.orientechnologies.orient.core.util.ODateHelper;
 
+import java.io.Serializable;
+import java.io.UnsupportedEncodingException;
+import java.math.BigDecimal;
+import java.util.*;
+
 @SuppressWarnings("serial")
 public abstract class ORecordSerializerStringAbstract implements ORecordSerializer, Serializable {
-  protected static final OProfilerMBean PROFILER              = Orient.instance().getProfiler();
-  private static final char             DECIMAL_SEPARATOR     = '.';
-  private static final String           MAX_INTEGER_AS_STRING = String.valueOf(Integer.MAX_VALUE);
-  private static final int              MAX_INTEGER_DIGITS    = MAX_INTEGER_AS_STRING.length();
+  protected static final OProfiler PROFILER              = Orient.instance().getProfiler();
+  private static final char        DECIMAL_SEPARATOR     = '.';
+  private static final String      MAX_INTEGER_AS_STRING = String.valueOf(Integer.MAX_VALUE);
+  private static final int         MAX_INTEGER_DIGITS    = MAX_INTEGER_AS_STRING.length();
 
   public static Object fieldTypeFromStream(final ODocument iDocument, OType iType, final Object iValue) {
     if (iValue == null)
@@ -193,33 +192,38 @@ public abstract class ORecordSerializerStringAbstract implements ORecordSerializ
       if (iValue instanceof ORecordId)
         ((ORecordId) iValue).toString(iBuffer);
       else
-        ((ORecord) iValue).getIdentity().toString(iBuffer);
+        ((OIdentifiable) iValue).getIdentity().toString(iBuffer);
       PROFILER.stopChrono(PROFILER.getProcessMetric("serializer.record.string.link2string"), "Serialize link to string", timer);
       break;
 
     case EMBEDDEDSET:
-      ORecordSerializerSchemaAware2CSV.INSTANCE.embeddedCollectionToStream(ODatabaseRecordThreadLocal.INSTANCE.getIfDefined(),
-          null, iBuffer, null, null, iValue, null, true, true);
+      ORecordSerializerSchemaAware2CSV.INSTANCE
+          .embeddedCollectionToStream(ODatabaseRecordThreadLocal.INSTANCE.getIfDefined(), null, iBuffer, null, null, iValue, true,
+              true);
       PROFILER.stopChrono(PROFILER.getProcessMetric("serializer.record.string.embedSet2string"), "Serialize embeddedset to string",
           timer);
       break;
 
     case EMBEDDEDLIST:
-      ORecordSerializerSchemaAware2CSV.INSTANCE.embeddedCollectionToStream(ODatabaseRecordThreadLocal.INSTANCE.getIfDefined(),
-          null, iBuffer, null, null, iValue, null, true, false);
+      ORecordSerializerSchemaAware2CSV.INSTANCE
+          .embeddedCollectionToStream(ODatabaseRecordThreadLocal.INSTANCE.getIfDefined(), null, iBuffer, null, null, iValue, true,
+              false);
       PROFILER.stopChrono(PROFILER.getProcessMetric("serializer.record.string.embedList2string"),
           "Serialize embeddedlist to string", timer);
       break;
 
     case EMBEDDEDMAP:
       ORecordSerializerSchemaAware2CSV.INSTANCE.embeddedMapToStream(ODatabaseRecordThreadLocal.INSTANCE.getIfDefined(), null,
-          iBuffer, null, null, iValue, null, true);
+          iBuffer, null, null, iValue, true);
       PROFILER.stopChrono(PROFILER.getProcessMetric("serializer.record.string.embedMap2string"), "Serialize embeddedmap to string",
           timer);
       break;
 
     case EMBEDDED:
-      OStringSerializerEmbedded.INSTANCE.toStream(iBuffer, iValue);
+      if (iValue instanceof ODocument) {
+        ORecordSerializerSchemaAware2CSV.INSTANCE.toString((ODocument) iValue, iBuffer, null);
+      } else
+        OStringSerializerEmbedded.INSTANCE.toStream(iBuffer, iValue);
       PROFILER
           .stopChrono(PROFILER.getProcessMetric("serializer.record.string.embed2string"), "Serialize embedded to string", timer);
       break;
@@ -238,7 +242,7 @@ public abstract class ORecordSerializerStringAbstract implements ORecordSerializ
    * Parses a string returning the closer type. Numbers by default are INTEGER if haven't decimal separator, otherwise FLOAT. To
    * treat all the number types numbers are postponed with a character that tells the type: b=byte, s=short, l=long, f=float,
    * d=double, t=date.
-   * 
+   *
    * @param iValue
    *          Value to parse
    * @return The closest type recognized
@@ -258,8 +262,6 @@ public abstract class ORecordSerializerStringAbstract implements ORecordSerializ
       return OType.BINARY;
     else if (firstChar == OStringSerializerHelper.EMBEDDED_BEGIN)
       return OType.EMBEDDED;
-    else if (firstChar == OStringSerializerHelper.LINK)
-      return OType.LINK;
     else if (firstChar == OStringSerializerHelper.LIST_BEGIN)
       return OType.EMBEDDEDLIST;
     else if (firstChar == OStringSerializerHelper.SET_BEGIN)
@@ -293,21 +295,29 @@ public abstract class ORecordSerializerStringAbstract implements ORecordSerializ
                 continue;
               }
             } else if (c == 'f')
-              return OType.FLOAT;
+              return index != (iValue.length() - 1) ? OType.STRING : OType.FLOAT;
             else if (c == 'c')
-              return OType.DECIMAL;
+              return index != (iValue.length() - 1) ? OType.STRING : OType.DECIMAL;
             else if (c == 'l')
-              return OType.LONG;
+              return index != (iValue.length() - 1) ? OType.STRING : OType.LONG;
             else if (c == 'd')
-              return OType.DOUBLE;
+              return index != (iValue.length() - 1) ? OType.STRING : OType.DOUBLE;
             else if (c == 'b')
-              return OType.BYTE;
+              return index != (iValue.length() - 1) ? OType.STRING : OType.BYTE;
             else if (c == 'a')
-              return OType.DATE;
+              return index != (iValue.length() - 1) ? OType.STRING : OType.DATE;
             else if (c == 't')
-              return OType.DATETIME;
+              return index != (iValue.length() - 1) ? OType.STRING : OType.DATETIME;
             else if (c == 's')
-              return OType.SHORT;
+              return index != (iValue.length() - 1) ? OType.STRING : OType.SHORT;
+            else if (c == 'e') { //eg. 1e-06
+              try{
+                Double.parseDouble(iValue);
+                return  OType.DOUBLE;
+              }catch (Exception e){
+                return OType.STRING;
+              }
+            }
 
           return OType.STRING;
         }
@@ -324,8 +334,12 @@ public abstract class ORecordSerializerStringAbstract implements ORecordSerializ
 
     // CHECK IF THE DECIMAL NUMBER IS A FLOAT OR DOUBLE
     final double dou = Double.parseDouble(iValue);
-    if (dou <= Float.MAX_VALUE || dou >= Float.MIN_VALUE)
+    if (dou <= Float.MAX_VALUE && dou >= Float.MIN_VALUE && Double.toString(dou).equals(Float.toString((float) dou))
+        && new Double(new Double(dou).floatValue()).doubleValue() == dou) {
       return OType.FLOAT;
+    } else if (!new Double(dou).toString().equals(iValue)) {
+      return OType.DECIMAL;
+    }
 
     return OType.DOUBLE;
   }
@@ -333,7 +347,7 @@ public abstract class ORecordSerializerStringAbstract implements ORecordSerializ
   /**
    * Parses the field type char returning the closer type. Default is STRING. b=binary if iValue.lenght() >= 4 b=byte if
    * iValue.lenght() <= 3 s=short, l=long f=float d=double a=date t=datetime
-   * 
+   *
    * @param iValue
    *          Value to parse
    * @param iCharType
@@ -366,10 +380,16 @@ public abstract class ORecordSerializerStringAbstract implements ORecordSerializ
       return OType.LINKBAG;
     else if (iCharType == 'z')
       return OType.LINKLIST;
+    else if (iCharType == 'm')
+      return OType.LINKMAP;
     else if (iCharType == 'x')
       return OType.LINK;
     else if (iCharType == 'n')
       return OType.LINKSET;
+    else if (iCharType == 'x')
+      return OType.LINK;
+    else if (iCharType == 'u')
+      return OType.CUSTOM;
 
     return OType.STRING;
   }
@@ -379,7 +399,7 @@ public abstract class ORecordSerializerStringAbstract implements ORecordSerializ
    * otherwise FLOAT. To treat all the number types numbers are postponed with a character that tells the type: b=byte, s=short,
    * l=long, f=float, d=double, t=date. If starts with # it's a RecordID. Most of the code is equals to getType() but has been
    * copied to speed-up it.
-   * 
+   *
    * @param iValue
    *          Value to parse
    * @return The closest type recognized
@@ -426,12 +446,15 @@ public abstract class ORecordSerializerStringAbstract implements ORecordSerializ
     boolean integer = true;
     char c;
 
+    boolean stringStarBySign = false;
+
     for (int index = 0; index < iValue.length(); ++index) {
       c = iValue.charAt(index);
-      if (c < '0' || c > '9')
-        if ((index == 0 && (c == '+' || c == '-')))
+      if (c < '0' || c > '9') {
+        if ((index == 0 && (c == '+' || c == '-'))) {
+          stringStarBySign = true;
           continue;
-        else if (c == DECIMAL_SEPARATOR)
+        } else if (c == DECIMAL_SEPARATOR)
           integer = false;
         else {
           if (index > 0) {
@@ -462,7 +485,12 @@ public abstract class ORecordSerializerStringAbstract implements ORecordSerializ
           }
           return iValue;
         }
+      } else if (stringStarBySign) {
+        stringStarBySign = false;
+      }
     }
+    if (stringStarBySign)
+      return iValue;
 
     if (integer) {
       try {
@@ -481,7 +509,7 @@ public abstract class ORecordSerializerStringAbstract implements ORecordSerializ
     switch (iType) {
     case STRING:
       if (iValue instanceof String) {
-        final String s = OStringSerializerHelper.getStringContent(iValue);
+        final String s = OIOUtils.getStringContent(iValue);
         return OStringSerializerHelper.decode(s);
       }
       return iValue.toString();
@@ -640,29 +668,26 @@ public abstract class ORecordSerializerStringAbstract implements ORecordSerializ
 
   public abstract ORecord fromString(String iContent, ORecord iRecord, String[] iFields);
 
-  public StringBuilder toString(final ORecord iRecord, final String iFormat) {
-    return toString(iRecord, new StringBuilder(1024), iFormat, ODatabaseRecordThreadLocal.INSTANCE.get(),
-        OSerializationSetThreadLocal.INSTANCE.get(), false, true);
-  }
-
-  public StringBuilder toString(final ORecord iRecord, final String iFormat, final boolean autoDetectCollectionType) {
-    return toString(iRecord, new StringBuilder(1024), iFormat, ODatabaseRecordThreadLocal.INSTANCE.get(),
-        OSerializationSetThreadLocal.INSTANCE.get(), false, autoDetectCollectionType);
-  }
-
   public StringBuilder toString(final ORecord iRecord, final StringBuilder iOutput, final String iFormat) {
-    return toString(iRecord, iOutput, iFormat, null, OSerializationSetThreadLocal.INSTANCE.get(), false, true);
+    return toString(iRecord, iOutput, iFormat, null, false, true);
   }
 
   public ORecord fromString(final String iSource) {
     return fromString(iSource, (ORecord) ODatabaseRecordThreadLocal.INSTANCE.get().newInstance(), null);
   }
 
+  @Override
+  public String[] getFieldNames(ODocument reference, byte[] iSource) {
+    return null;
+  }
+
   public ORecord fromStream(final byte[] iSource, final ORecord iRecord, final String[] iFields) {
     final long timer = PROFILER.startChrono();
 
     try {
-      return fromString(OBinaryProtocol.bytes2string(iSource), iRecord, iFields);
+      return fromString(new String(iSource,"UTF-8"), iRecord, iFields);
+    } catch (UnsupportedEncodingException e) {
+      throw OException.wrapException(new OSchemaException("Error reading record"),e);
     } finally {
 
       PROFILER
@@ -674,8 +699,9 @@ public abstract class ORecordSerializerStringAbstract implements ORecordSerializ
     final long timer = PROFILER.startChrono();
 
     try {
-      return OBinaryProtocol.string2bytes(toString(iRecord, new StringBuilder(2048), null, null,
-          OSerializationSetThreadLocal.INSTANCE.get(), iOnlyDelta, true).toString());
+      return toString(iRecord, new StringBuilder(2048), null, null, iOnlyDelta, true).toString().getBytes("UTF-8");
+    } catch (UnsupportedEncodingException e) {
+      throw OException.wrapException(new OSchemaException("error encoding string"), e);
     } finally {
 
       PROFILER.stopChrono(PROFILER.getProcessMetric("serializer.record.string.toStream"), "Serialize record to stream", timer);
@@ -683,6 +709,9 @@ public abstract class ORecordSerializerStringAbstract implements ORecordSerializ
   }
 
   protected abstract StringBuilder toString(final ORecord iRecord, final StringBuilder iOutput, final String iFormat,
-      final OUserObject2RecordHandler iObjHandler, final Set<ODocument> iMarshalledRecords, boolean iOnlyDelta,
-      boolean autoDetectCollectionType);
+      final OUserObject2RecordHandler iObjHandler, boolean iOnlyDelta, boolean autoDetectCollectionType);
+
+  public boolean getSupportBinaryEvaluate() {
+    return false;
+  }
 }

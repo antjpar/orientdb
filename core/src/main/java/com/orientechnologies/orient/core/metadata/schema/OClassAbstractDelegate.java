@@ -16,15 +16,16 @@
 
 package com.orientechnologies.orient.core.metadata.schema;
 
-import java.io.IOException;
-import java.util.Collection;
-import java.util.Map;
-import java.util.Set;
-
 import com.orientechnologies.common.listener.OProgressListener;
 import com.orientechnologies.orient.core.index.OIndex;
 import com.orientechnologies.orient.core.metadata.schema.clusterselection.OClusterSelectionStrategy;
 import com.orientechnologies.orient.core.record.impl.ODocument;
+
+import java.io.IOException;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Abstract Delegate for OClass interface.
@@ -36,7 +37,15 @@ public abstract class OClassAbstractDelegate implements OClass {
   protected final OClass delegate;
 
   public OClassAbstractDelegate(final OClass delegate) {
+    if (delegate == null)
+      throw new IllegalArgumentException("Class is null");
+
     this.delegate = delegate;
+  }
+
+  @Override
+  public OIndex<?> getAutoShardingIndex() {
+    return delegate.getAutoShardingIndex();
   }
 
   @Override
@@ -45,23 +54,18 @@ public abstract class OClassAbstractDelegate implements OClass {
   }
 
   @Override
-  public <T> T newInstance() throws InstantiationException, IllegalAccessException {
-    return delegate.newInstance();
-  }
-
-  @Override
   public boolean isAbstract() {
     return delegate.isAbstract();
   }
 
   @Override
-  public OClass setAbstract(boolean iAbstract) {
+  public OClass setAbstract(final boolean iAbstract) {
     delegate.setAbstract(iAbstract);
     return this;
   }
 
   @Override
-  public OClass setStrictMode(boolean iMode) {
+  public OClass setStrictMode(final boolean iMode) {
     delegate.setStrictMode(iMode);
     return this;
   }
@@ -72,7 +76,7 @@ public abstract class OClassAbstractDelegate implements OClass {
   }
 
   @Override
-  public OClass setSuperClass(OClass iSuperClass) {
+  public OClass setSuperClass(final OClass iSuperClass) {
     delegate.setSuperClass(iSuperClass);
     return this;
   }
@@ -83,7 +87,45 @@ public abstract class OClassAbstractDelegate implements OClass {
   }
 
   @Override
-  public OClass setName(String iName) {
+  public List<OClass> getSuperClasses() {
+    return delegate.getSuperClasses();
+  }
+
+  @Override
+  public boolean hasSuperClasses() {
+    return delegate.hasSuperClasses();
+  }
+
+  @Override
+  public OClass setSuperClasses(final List<? extends OClass> classes) {
+    delegate.setSuperClasses(classes);
+    return this;
+  }
+
+  @Override
+  public List<String> getSuperClassesNames() {
+    return delegate.getSuperClassesNames();
+  }
+
+  @Override
+  public void getIndexes(final Collection<OIndex<?>> indexes) {
+    delegate.getIndexes(indexes);
+  }
+
+  @Override
+  public OClass addSuperClass(final OClass superClass) {
+    delegate.addSuperClass(superClass);
+    return this;
+  }
+
+  @Override
+  public OClass removeSuperClass(final OClass superClass) {
+    delegate.removeSuperClass(superClass);
+    return this;
+  }
+
+  @Override
+  public OClass setName(final String iName) {
     delegate.setName(iName);
     return this;
   }
@@ -129,28 +171,33 @@ public abstract class OClassAbstractDelegate implements OClass {
   }
 
   @Override
+  public OProperty createProperty(String iPropertyName, OType iType, OClass iLinkedClass, boolean unsafe) {
+    return delegate.createProperty(iPropertyName, iType, iLinkedClass, unsafe);
+  }
+
+  @Override
   public OProperty createProperty(final String iPropertyName, final OType iType, final OType iLinkedType) {
     return delegate.createProperty(iPropertyName, iType, iLinkedType);
   }
 
   @Override
-  public void dropProperty(String iPropertyName) {
+  public OProperty createProperty(String iPropertyName, OType iType, OType iLinkedType, boolean unsafe) {
+    return delegate.createProperty(iPropertyName, iType, iLinkedType, unsafe);
+  }
+
+  @Override
+  public void dropProperty(final String iPropertyName) {
     delegate.dropProperty(iPropertyName);
   }
 
   @Override
-  public boolean existsProperty(String iPropertyName) {
+  public boolean existsProperty(final String iPropertyName) {
     return delegate.existsProperty(iPropertyName);
   }
 
   @Override
-  public Class<?> getJavaClass() {
-    return delegate.getJavaClass();
-  }
-
-  @Override
-  public int getClusterForNewInstance() {
-    return delegate.getClusterForNewInstance();
+  public int getClusterForNewInstance(final ODocument doc) {
+    return delegate.getClusterForNewInstance(doc);
   }
 
   @Override
@@ -197,6 +244,16 @@ public abstract class OClassAbstractDelegate implements OClass {
     return this;
   }
 
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public OClass truncateCluster(String clusterName) {
+    delegate.truncateCluster(clusterName);
+
+    return this;
+  }
+
   @Override
   public OClass removeClusterId(final int iId) {
     delegate.removeClusterId(iId);
@@ -209,13 +266,28 @@ public abstract class OClassAbstractDelegate implements OClass {
   }
 
   @Override
+  public Collection<OClass> getSubclasses() {
+    return delegate.getSubclasses();
+  }
+
+  @Override
   public Collection<OClass> getBaseClasses() {
-    return delegate.getBaseClasses();
+    return delegate.getSubclasses();
+  }
+
+  @Override
+  public Collection<OClass> getAllSubclasses() {
+    return delegate.getAllSubclasses();
+  }
+
+  @Override
+  public Collection<OClass> getAllSuperClasses() {
+    return delegate.getAllSuperClasses();
   }
 
   @Override
   public Collection<OClass> getAllBaseClasses() {
-    return delegate.getAllBaseClasses();
+    return delegate.getAllSubclasses();
   }
 
   @Override
@@ -272,6 +344,17 @@ public abstract class OClassAbstractDelegate implements OClass {
   @Override
   public OClass setShortName(final String shortName) {
     delegate.setShortName(shortName);
+    return this;
+  }
+
+  @Override
+  public String getDescription() {
+    return delegate.getDescription();
+  }
+
+  @Override
+  public OClass setDescription(String iDescription) {
+    delegate.setDescription(iDescription);
     return this;
   }
 
@@ -391,12 +474,37 @@ public abstract class OClassAbstractDelegate implements OClass {
   }
 
   @Override
-  public boolean hasClusterId(int clusterId) {
+  public boolean hasClusterId(final int clusterId) {
     return delegate.hasClusterId(clusterId);
+  }
+
+  @Override
+  public boolean hasPolymorphicClusterId(final int clusterId) {
+    return delegate.hasPolymorphicClusterId(clusterId);
   }
 
   @Override
   public int compareTo(final OClass o) {
     return delegate.compareTo(o);
+  }
+
+  @Override
+  public float getClassOverSize() {
+    return delegate.getClassOverSize();
+  }
+
+  @Override
+  public String toString() {
+    return delegate.toString();
+  }
+
+  @Override
+  public boolean equals(final Object obj) {
+    return delegate.equals(obj);
+  }
+
+  @Override
+  public int hashCode() {
+    return delegate.hashCode();
   }
 }

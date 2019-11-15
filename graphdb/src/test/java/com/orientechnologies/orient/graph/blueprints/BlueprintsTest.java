@@ -1,21 +1,20 @@
 package com.orientechnologies.orient.graph.blueprints;
 
+import com.orientechnologies.orient.core.id.ORID;
+import com.orientechnologies.orient.core.id.ORecordId;
+import com.orientechnologies.orient.core.metadata.schema.OType;
+import com.orientechnologies.orient.core.sql.OCommandSQL;
+import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
+import com.tinkerpop.blueprints.Edge;
+import com.tinkerpop.blueprints.Vertex;
+import com.tinkerpop.blueprints.impls.orient.*;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
-import com.orientechnologies.orient.core.sql.OCommandSQL;
-import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
-import com.tinkerpop.blueprints.Edge;
-import com.tinkerpop.blueprints.Vertex;
-import com.tinkerpop.blueprints.impls.orient.OrientEdge;
-import com.tinkerpop.blueprints.impls.orient.OrientGraph;
-import com.tinkerpop.blueprints.impls.orient.OrientGraphQuery;
-import com.tinkerpop.blueprints.impls.orient.OrientVertex;
-
 public class BlueprintsTest {
-  private static String      DB_URL = "memory:" + BlueprintsTest.class.getSimpleName();
+  private static String DB_URL = "memory:" + BlueprintsTest.class.getSimpleName();
   private static OrientGraph graph;
 
   public BlueprintsTest() {
@@ -52,6 +51,37 @@ public class BlueprintsTest {
     vertices = ((OrientGraphQuery) graph.query()).labels("SubVertex").vertices();
     Assert.assertTrue(vertices.iterator().hasNext());
     Assert.assertEquals(vertices.iterator().next().getProperty("key"), "subtype");
+  }
+
+  @Test
+  public void testPolymorphicVertex() {
+    if (graph.getVertexType("Node") == null) {
+      OrientVertexType node = graph.createVertexType("Node");
+      node.createProperty("name", OType.STRING);
+
+    }
+
+    if (graph.getVertexType("SubNode") == null) {
+      OrientVertexType subNode = graph.createVertexType("SubNode");
+      subNode.addSuperClass(graph.getVertexType("Node"));
+    }
+
+    graph.begin();
+    Vertex v = graph.addVertex("class:SubNode");
+    v.setProperty("name", "subtype");
+    Assert.assertEquals(((OrientVertex) v).getRecord().getSchemaClass().getName(), "SubNode");
+
+    // TEST QUERY AGAINST SUB-TYPE IN TX
+    Iterable<Vertex> vertices = graph.getVertices("Node.name", "subtype");
+    Assert.assertTrue(vertices.iterator().hasNext());
+    Assert.assertEquals(vertices.iterator().next().getProperty("name"), "subtype");
+
+    graph.commit();
+
+    // TEST QUERY AGAINST SUB-TYPE NON IN TX
+    vertices = graph.getVertices("Node.name", "subtype");
+    Assert.assertTrue(vertices.iterator().hasNext());
+    Assert.assertEquals(vertices.iterator().next().getProperty("name"), "subtype");
   }
 
   @Test
@@ -112,4 +142,38 @@ public class BlueprintsTest {
     Assert.assertTrue(graph.getVertices("name", "Smith\"s").iterator().hasNext());
   }
 
+  @Test
+  public void testInvalidVertexRID() {
+    OrientVertex v = graph.getVertex(new ORecordId("9:9999"));
+    System.out.println(v);
+  }
+
+  @Test
+  public void testInvalidEdgeRID() {
+    try {
+      OrientEdge e = graph.addEdge(null, new OrientVertex(graph,new ORecordId("9:9999")), new OrientVertex(graph,new ORecordId("9:99999")), "E");
+      Assert.assertTrue(false);
+    } catch (IllegalArgumentException e) {
+      Assert.assertTrue(true);
+    }
+  }
+
+  @Test
+  public void testSetEvenParams() {
+    try {
+      graph.addVertex(null, "name", "Luca", "surname");
+      Assert.assertTrue(false);
+    } catch (IllegalArgumentException e) {
+      Assert.assertTrue(true);
+    }
+  }
+
+  @Test
+  public void testPersistentRIDAfterCommit() {
+    Vertex v = graph.addVertex(null);
+    v.setProperty("test", "value");
+    graph.commit();
+    // System.out.println(v.getId());
+    Assert.assertTrue(((ORID) v.getId()).isPersistent());
+  }
 }

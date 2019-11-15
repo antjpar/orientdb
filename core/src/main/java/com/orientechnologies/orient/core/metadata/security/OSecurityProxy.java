@@ -1,32 +1,32 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.metadata.security;
+
+import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
+import com.orientechnologies.orient.core.db.record.OIdentifiable;
+import com.orientechnologies.orient.core.db.record.OProxedResource;
+import com.orientechnologies.orient.core.id.ORID;
+import com.orientechnologies.orient.core.record.impl.ODocument;
 
 import java.util.List;
 import java.util.Set;
-
-import com.orientechnologies.orient.core.db.record.ODatabaseRecordInternal;
-import com.orientechnologies.orient.core.db.record.OIdentifiable;
-import com.orientechnologies.orient.core.db.record.OProxedResource;
-import com.orientechnologies.orient.core.metadata.security.ORole.ALLOW_MODES;
-import com.orientechnologies.orient.core.record.impl.ODocument;
 
 /**
  * Proxy class for user management
@@ -35,13 +35,33 @@ import com.orientechnologies.orient.core.record.impl.ODocument;
  * 
  */
 public class OSecurityProxy extends OProxedResource<OSecurity> implements OSecurity {
-  public OSecurityProxy(final OSecurity iDelegate, final ODatabaseRecordInternal iDatabase) {
+  public OSecurityProxy(final OSecurity iDelegate, final ODatabaseDocumentInternal iDatabase) {
     super(iDelegate, iDatabase);
   }
 
   @Override
   public boolean isAllowed(final Set<OIdentifiable> iAllowAll, final Set<OIdentifiable> iAllowOperation) {
     return delegate.isAllowed(iAllowAll, iAllowOperation);
+  }
+
+  @Override
+  public OIdentifiable allowUser(ODocument iDocument, ORestrictedOperation iOperationType, String iUserName) {
+    return delegate.allowUser(iDocument, iOperationType, iUserName);
+  }
+
+  @Override
+  public OIdentifiable allowRole(ODocument iDocument, ORestrictedOperation iOperationType, String iRoleName) {
+    return delegate.allowRole(iDocument, iOperationType, iRoleName);
+  }
+
+  @Override
+  public OIdentifiable denyUser(ODocument iDocument, ORestrictedOperation iOperationType, String iUserName) {
+    return delegate.denyUser(iDocument, iOperationType, iUserName);
+  }
+
+  @Override
+  public OIdentifiable denyRole(ODocument iDocument, ORestrictedOperation iOperationType, String iRoleName) {
+    return delegate.denyRole(iDocument, iOperationType, iRoleName);
   }
 
   public OIdentifiable allowUser(final ODocument iDocument, final String iAllowFieldName, final String iUserName) {
@@ -87,8 +107,16 @@ public class OSecurityProxy extends OProxedResource<OSecurity> implements OSecur
     return delegate.authenticate(iUsername, iUserPassword);
   }
 
+  public OUser authenticate(final OToken authToken) {
+    return delegate.authenticate(authToken);
+  }
+
   public OUser getUser(final String iUserName) {
     return delegate.getUser(iUserName);
+  }
+
+  public OUser getUser(final ORID iUserId) {
+    return delegate.getUser(iUserId);
   }
 
   public OUser createUser(final String iUserName, final String iUserPassword, final String... iRoles) {
@@ -107,11 +135,11 @@ public class OSecurityProxy extends OProxedResource<OSecurity> implements OSecur
     return delegate.getRole(iRole);
   }
 
-  public ORole createRole(final String iRoleName, final ALLOW_MODES iAllowMode) {
+  public ORole createRole(final String iRoleName, final OSecurityRole.ALLOW_MODES iAllowMode) {
     return delegate.createRole(iRoleName, iAllowMode);
   }
 
-  public ORole createRole(final String iRoleName, final ORole iParent, final ALLOW_MODES iAllowMode) {
+  public ORole createRole(final String iRoleName, final ORole iParent, final OSecurityRole.ALLOW_MODES iAllowMode) {
     return delegate.createRole(iRoleName, iParent, iAllowMode);
   }
 
@@ -125,10 +153,6 @@ public class OSecurityProxy extends OProxedResource<OSecurity> implements OSecur
 
   public String toString() {
     return delegate.toString();
-  }
-
-  public OUser repair() {
-    return delegate.repair();
   }
 
   public boolean dropUser(final String iUserName) {
@@ -146,5 +170,15 @@ public class OSecurityProxy extends OProxedResource<OSecurity> implements OSecur
   @Override
   public OSecurity getUnderlying() {
     return delegate;
+  }
+
+  @Override
+  public long getVersion() {
+    return delegate.getVersion();
+  }
+
+  @Override
+  public void incrementVersion() {
+    delegate.incrementVersion();
   }
 }

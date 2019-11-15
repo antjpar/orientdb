@@ -19,103 +19,87 @@
  */
 package com.orientechnologies.orient.server.hazelcast;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.locks.Lock;
-
+import com.hazelcast.config.Config;
 import com.hazelcast.config.FileSystemXmlConfig;
-import com.hazelcast.config.QueueConfig;
 import com.hazelcast.core.*;
-import com.orientechnologies.common.console.DefaultConsoleReader;
-import com.orientechnologies.common.console.OConsoleReader;
+import com.hazelcast.spi.exception.RetryableHazelcastException;
+import com.orientechnologies.common.concur.OOfflineNodeException;
+import com.orientechnologies.common.concur.lock.OInterruptedException;
+import com.orientechnologies.common.exception.OException;
 import com.orientechnologies.common.io.OFileUtils;
+import com.orientechnologies.common.io.OUtils;
 import com.orientechnologies.common.log.OLogManager;
 import com.orientechnologies.common.parser.OSystemVariableResolver;
-import com.orientechnologies.common.util.OArrays;
+import com.orientechnologies.common.util.OCallable;
+import com.orientechnologies.common.util.OCallableNoParamNoReturn;
+import com.orientechnologies.common.util.OCallableUtils;
+import com.orientechnologies.orient.core.OSignalHandler;
 import com.orientechnologies.orient.core.Orient;
-import com.orientechnologies.orient.core.command.OCommandOutputListener;
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
-import com.orientechnologies.orient.core.db.ODatabaseComplex;
-import com.orientechnologies.orient.core.db.ODatabaseComplexInternal;
+import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
 import com.orientechnologies.orient.core.db.ODatabaseInternal;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.db.OScenarioThreadLocal;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
-import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
-import com.orientechnologies.orient.core.exception.OConfigurationException;
-import com.orientechnologies.orient.core.metadata.schema.OClass;
-import com.orientechnologies.orient.core.metadata.schema.OClassImpl;
-import com.orientechnologies.orient.core.metadata.schema.OSchema;
+import com.orientechnologies.orient.core.exception.ODatabaseException;
 import com.orientechnologies.orient.core.metadata.schema.OType;
+import com.orientechnologies.orient.core.record.ORecordInternal;
 import com.orientechnologies.orient.core.record.impl.ODocument;
-import com.orientechnologies.orient.core.storage.OStorageEmbedded;
-import com.orientechnologies.orient.server.OClientConnectionManager;
+import com.orientechnologies.orient.core.storage.impl.local.paginated.OLocalPaginatedStorage;
 import com.orientechnologies.orient.server.OServer;
-import com.orientechnologies.orient.server.config.OServerConfiguration;
-import com.orientechnologies.orient.server.config.OServerHandlerConfiguration;
+import com.orientechnologies.orient.server.OSystemDatabase;
 import com.orientechnologies.orient.server.config.OServerParameterConfiguration;
-import com.orientechnologies.orient.server.distributed.ODistributedAbstractPlugin;
-import com.orientechnologies.orient.server.distributed.ODistributedConfiguration;
-import com.orientechnologies.orient.server.distributed.ODistributedDatabaseChunk;
-import com.orientechnologies.orient.server.distributed.ODistributedException;
-import com.orientechnologies.orient.server.distributed.ODistributedRequest;
-import com.orientechnologies.orient.server.distributed.ODistributedRequest.EXECUTION_MODE;
-import com.orientechnologies.orient.server.distributed.ODistributedResponse;
-import com.orientechnologies.orient.server.distributed.ODistributedServerLog;
+import com.orientechnologies.orient.server.distributed.*;
 import com.orientechnologies.orient.server.distributed.ODistributedServerLog.DIRECTION;
-import com.orientechnologies.orient.server.distributed.ODistributedStorage;
-import com.orientechnologies.orient.server.distributed.conflict.OReplicationConflictResolver;
-import com.orientechnologies.orient.server.distributed.task.OAbstractRemoteTask;
-import com.orientechnologies.orient.server.distributed.task.OCopyDatabaseChunkTask;
-import com.orientechnologies.orient.server.distributed.task.OCreateRecordTask;
-import com.orientechnologies.orient.server.distributed.task.ODeployDatabaseTask;
+import com.orientechnologies.orient.server.distributed.impl.*;
+import com.orientechnologies.orient.server.distributed.impl.task.OAbstractSyncDatabaseTask;
+import com.orientechnologies.orient.server.distributed.impl.task.ODropDatabaseTask;
+import com.orientechnologies.orient.server.distributed.impl.task.OUpdateDatabaseConfigurationTask;
 import com.orientechnologies.orient.server.network.OServerNetworkListener;
+import com.orientechnologies.orient.server.network.protocol.OBeforeDatabaseOpenNetworkEventListener;
+import sun.misc.Signal;
+
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.security.SecureRandom;
+import java.util.*;
 
 /**
  * Hazelcast implementation for clustering.
- * 
+ *
  * @author Luca Garulli (l.garulli--at--orientechnologies.com)
- * 
  */
-public class OHazelcastPlugin extends ODistributedAbstractPlugin implements MembershipListener, EntryListener<String, Object>,
-    OCommandOutputListener {
+public class OHazelcastPlugin extends ODistributedAbstractPlugin
+    implements MembershipListener, EntryListener<String, Object>, LifecycleListener, OBeforeDatabaseOpenNetworkEventListener {
 
-  protected static final String                 NODE_NAME_ENV          = "ORIENTDB_NODE_NAME";
-  protected static final String                 CONFIG_NODE_PREFIX     = "node.";
-  protected static final String                 CONFIG_DBSTATUS_PREFIX = "dbstatus.";
-  protected static final String                 CONFIG_DATABASE_PREFIX = "database.";
+  public static final String CONFIG_DATABASE_PREFIX = "database.";
 
-  protected String                              nodeId;
-  protected String                              hazelcastConfigFile    = "hazelcast.xml";
-  protected Map<String, Member>                 activeNodes            = new ConcurrentHashMap<String, Member>();
-  protected OHazelcastDistributedMessageService messageService;
-  protected long                                timeOffset             = 0;
-  protected Date                                startedOn              = new Date();
+  public static final String CONFIG_NODE_PREFIX     = "node.";
+  public static final String CONFIG_DBSTATUS_PREFIX = "dbstatus.";
+  public static final String CONFIG_LOCKMANAGER     = "coordinator";
+  public static final String CONFIG_REGISTEREDNODES = "registeredNodes";
 
-  protected volatile NODE_STATUS                status                 = NODE_STATUS.OFFLINE;
+  protected String hazelcastConfigFile = "hazelcast.xml";
+  protected          Config            hazelcastConfig;
+  protected          String            membershipListenerRegistration;
+  protected          String            membershipListenerMapRegistration;
+  protected volatile HazelcastInstance hazelcastInstance;
 
-  protected String                              membershipListenerRegistration;
-
-  protected volatile HazelcastInstance          hazelcastInstance;
-  protected Object                              installDatabaseLock    = new Object();
-  protected long                                lastClusterChangeOn;
+  // THIS MAP IS BACKED BY HAZELCAST EVENTS. IN THIS WAY WE AVOID TO USE HZ MAP DIRECTLY
+  protected OHazelcastDistributedMap       configurationMap;
+  private   OSignalHandler.OSignalListener signalListener;
 
   public OHazelcastPlugin() {
+  }
+
+  // Must be set before startup() is called.
+  public void setHazelcastConfig(final Config config) {
+    hazelcastConfig = config;
+  }
+
+  // Must be set before config() is called.
+  public void setNodeName(String nodeName) {
+    this.nodeName = nodeName;
   }
 
   @Override
@@ -126,8 +110,10 @@ public class OHazelcastPlugin extends ODistributedAbstractPlugin implements Memb
       assignNodeName();
 
     for (OServerParameterConfiguration param : iParams) {
-      if (param.name.equalsIgnoreCase("configuration.hazelcast"))
+      if (param.name.equalsIgnoreCase("configuration.hazelcast")) {
         hazelcastConfigFile = OSystemVariableResolver.resolveSystemVariables(param.value);
+        hazelcastConfigFile = OFileUtils.getPath(hazelcastConfigFile);
+      }
     }
   }
 
@@ -136,69 +122,397 @@ public class OHazelcastPlugin extends ODistributedAbstractPlugin implements Memb
     if (!enabled)
       return;
 
+    Orient.instance().setRunningDistributed(true);
+
     OGlobalConfiguration.RID_BAG_EMBEDDED_TO_SBTREEBONSAI_THRESHOLD.setValue(Integer.MAX_VALUE);
-    OGlobalConfiguration.RID_BAG_SBTREEBONSAI_TO_EMBEDDED_THRESHOLD.setValue(-1);
+    OGlobalConfiguration.RID_BAG_SBTREEBONSAI_TO_EMBEDDED_THRESHOLD.setValue(Integer.MAX_VALUE);
+    OGlobalConfiguration.STORAGE_TRACK_CHANGED_RECORDS_IN_WAL.setValue(true);
+
+    // REGISTER TEMPORARY USER FOR REPLICATION PURPOSE
+    serverInstance.addTemporaryUser(REPLICATOR_USER, "" + new SecureRandom().nextLong(), "*");
 
     super.startup();
 
     status = NODE_STATUS.STARTING;
 
-    final String localNodeName = getLocalNodeName();
-
-    OLogManager.instance().info(this, "Starting distributed server '%s'...", localNodeName);
+    final String localNodeName = nodeName;
 
     activeNodes.clear();
+    activeNodesNamesByUuid.clear();
+    activeNodesUuidByName.clear();
+
+    // CLOSE ALL CONNECTIONS TO THE SERVERS
+    for (ORemoteServerController server : remoteServers.values())
+      server.close();
+    remoteServers.clear();
+
+    registeredNodeById.clear();
+    registeredNodeByName.clear();
 
     try {
       hazelcastInstance = configureHazelcast();
 
-      nodeId = hazelcastInstance.getCluster().getLocalMember().getUuid();
-      timeOffset = System.currentTimeMillis() - hazelcastInstance.getCluster().getClusterTime();
-      activeNodes.put(localNodeName, hazelcastInstance.getCluster().getLocalMember());
+      nodeUuid = hazelcastInstance.getCluster().getLocalMember().getUuid();
 
-      membershipListenerRegistration = hazelcastInstance.getCluster().addMembershipListener(this);
+      final LifecycleService lifecycleService = hazelcastInstance.getLifecycleService();
+      lifecycleService.addLifecycleListener(this);
+
+      OLogManager.instance().info(this, "Starting distributed server '%s' (hzID=%s)...", localNodeName, nodeUuid);
+
+      final long clusterTime = getClusterTime();
+      final long deltaTime = System.currentTimeMillis() - clusterTime;
+      OLogManager.instance()
+          .info(this, "Distributed cluster time=%s (delta from local node=%d)...", new Date(clusterTime), deltaTime);
+
+      activeNodes.put(localNodeName, hazelcastInstance.getCluster().getLocalMember());
+      activeNodesNamesByUuid.put(nodeUuid, localNodeName);
+      activeNodesUuidByName.put(localNodeName, nodeUuid);
+
+      configurationMap = new OHazelcastDistributedMap(this, hazelcastInstance);
 
       OServer.registerServerInstance(localNodeName, serverInstance);
 
-      final IMap<String, Object> configurationMap = (IMap<String, Object>) getConfigurationMap();
-      configurationMap.addEntryListener(this, true);
+      initRegisteredNodeIds();
 
-      // REGISTER CURRENT NODES
-      for (Member m : hazelcastInstance.getCluster().getMembers()) {
-        if (!m.getUuid().equals(getLocalNodeId())) {
-          final String memberName = getNodeName(m);
-          if (memberName != null)
-            activeNodes.put(memberName, m);
-          else if (!m.equals(hazelcastInstance.getCluster().getLocalMember()))
-            ODistributedServerLog.warn(this, localNodeName, null, DIRECTION.NONE, "Cannot find configuration for member: %s", m);
+      // PUBLISH CURRENT NODE NAME
+      final ODocument nodeCfg = new ODocument();
+      nodeCfg.setTrackingChanges(false);
+
+      // REMOVE ANY PREVIOUS REGISTERED SERVER WITH THE SAME NODE NAME
+      final Set<String> node2Remove = new HashSet<String>();
+      for (Iterator<Map.Entry<String, Object>> it = configurationMap.getHazelcastMap().entrySet().iterator(); it.hasNext(); ) {
+        final Map.Entry<String, Object> entry = it.next();
+        if (entry.getKey().startsWith(CONFIG_NODE_PREFIX)) {
+          final ODocument nCfg = (ODocument) entry.getValue();
+          if (nodeName.equals(nCfg.field("name"))) {
+            // SAME NODE NAME: REMOVE IT
+            node2Remove.add(entry.getKey());
+          }
         }
       }
 
-      // PUBLISH LOCAL NODE CFG
-      configurationMap.put(CONFIG_NODE_PREFIX + getLocalNodeId(), getLocalNodeConfiguration());
+      for (String n : node2Remove)
+        configurationMap.getHazelcastMap().remove(n);
 
-      messageService = new OHazelcastDistributedMessageService(this);
+      nodeCfg.field("id", nodeId);
+      nodeCfg.field("uuid", nodeUuid);
+      nodeCfg.field("name", nodeName);
+      ORecordInternal.setRecordSerializer(nodeCfg, ODatabaseDocumentTx.getDefaultSerializer());
+      configurationMap.put(CONFIG_NODE_PREFIX + nodeUuid, nodeCfg);
 
-      installNewDatabases(true);
+      // REGISTER CURRENT NODES
+      for (Member m : hazelcastInstance.getCluster().getMembers()) {
+        if (!m.getUuid().equals(nodeUuid)) {
+          boolean found = false;
+          for (int retry = 0; retry < 10; ++retry) {
+            final String memberName = getNodeName(m, false);
 
-      loadDistributedDatabases();
+            if (memberName == null || memberName.startsWith("ext:")) {
+              // ACTIVE NODE IN HZ, BUT NOT YET REGISTERED, WAIT AND RETRY
+              Thread.sleep(1000);
+              continue;
+            }
+
+            found = true;
+            activeNodes.put(memberName, m);
+            activeNodesNamesByUuid.put(m.getUuid(), memberName);
+            activeNodesUuidByName.put(memberName, m.getUuid());
+            break;
+          }
+
+          if (!found)
+            ODistributedServerLog
+                .warn(this, localNodeName, null, DIRECTION.NONE, "Cannot find configuration for member: %s, uuid", m, m.getUuid());
+        }
+      }
+
+      assignLockManagerFromCluster();
+
+      messageService = new ODistributedMessageServiceImpl(this);
+
+      initSystemDatabase();
+
+      ODistributedServerLog.info(this, localNodeName, null, DIRECTION.NONE, "Servers in cluster: %s", activeNodes.keySet());
+
+      publishLocalNodeConfiguration();
+
+      if (!configurationMap.containsKey(CONFIG_NODE_PREFIX + nodeUuid)) {
+        // NODE NOT REGISTERED, FORCING SHUTTING DOWN
+        ODistributedServerLog.error(this, localNodeName, null, DIRECTION.NONE, "Error on registering local node on cluster");
+        throw new ODistributedStartupException("Error on registering local node on cluster");
+      }
+
+      // CONNECTS TO ALL THE AVAILABLE NODES
+      for (String m : activeNodes.keySet())
+        if (!m.equals(nodeName))
+          getRemoteServer(m);
+
+      publishLocalNodeConfiguration();
+
+      installNewDatabasesFromCluster();
+
+      loadLocalDatabases();
+
+      membershipListenerMapRegistration = configurationMap.getHazelcastMap().addEntryListener(this, true);
+      membershipListenerRegistration = hazelcastInstance.getCluster().addMembershipListener(this);
 
       // REGISTER CURRENT MEMBERS
       setNodeStatus(NODE_STATUS.ONLINE);
 
-    } catch (FileNotFoundException e) {
-      throw new OConfigurationException("Error on creating Hazelcast instance", e);
+      publishLocalNodeConfiguration();
+
+      final long delay = OGlobalConfiguration.DISTRIBUTED_PUBLISH_NODE_STATUS_EVERY.getValueAsLong();
+      if (delay > 0) {
+        publishLocalNodeConfigurationTask = new TimerTask() {
+          @Override
+          public void run() {
+            publishLocalNodeConfiguration();
+          }
+        };
+        Orient.instance().scheduleTask(publishLocalNodeConfigurationTask, delay, delay);
+      }
+
+      final long statsDelay = OGlobalConfiguration.DISTRIBUTED_DUMP_STATS_EVERY.getValueAsLong();
+      if (statsDelay > 0) {
+        haStatsTask = new TimerTask() {
+          @Override
+          public void run() {
+            dumpStats();
+          }
+        };
+        Orient.instance().scheduleTask(haStatsTask, statsDelay, statsDelay);
+      }
+
+      final long healthChecker = OGlobalConfiguration.DISTRIBUTED_CHECK_HEALTH_EVERY.getValueAsLong();
+      if (healthChecker > 0) {
+        healthCheckerTask = new OClusterHealthChecker(this);
+        Orient.instance().scheduleTask(healthCheckerTask, healthChecker, healthChecker);
+      }
+
+      for (OServerNetworkListener nl : serverInstance.getNetworkListeners())
+        nl.registerBeforeConnectNetworkEventListener(this);
+
+      // WAIT ALL THE MESSAGES IN QUEUE ARE PROCESSED OR MAX 10 SECONDS
+      waitStartupIsCompleted();
+
+      signalListener = new OSignalHandler.OSignalListener() {
+        @Override
+        public void onSignal(final Signal signal) {
+          if (signal.toString().trim().equalsIgnoreCase("SIGTRAP"))
+            dumpStats();
+        }
+      };
+      Orient.instance().getSignalHandler().registerListener(signalListener);
+
+    } catch (Exception e) {
+      ODistributedServerLog.error(this, localNodeName, null, DIRECTION.NONE, "Error on starting distributed plugin", e);
+      throw OException.wrapException(new ODistributedStartupException("Error on starting distributed plugin"), e);
+    }
+
+    dumpServersStatus();
+  }
+
+  /**
+   * Protecte system database from being replicated
+   */
+  protected void initSystemDatabase() {
+    final ODocument defaultCfg = getStorage(OSystemDatabase.SYSTEM_DB_NAME)
+        .loadDatabaseConfiguration(getDefaultDatabaseConfigFile());
+    defaultCfg.field("autoDeploy", false);
+    final OModifiableDistributedConfiguration sysCfg = new OModifiableDistributedConfiguration(defaultCfg);
+    sysCfg.removeServer("<NEW_NODE>");
+
+    messageService.registerDatabase(OSystemDatabase.SYSTEM_DB_NAME, sysCfg);
+    sysCfg.addNewNodeInServerList(getLocalNodeName());
+  }
+
+  private void initRegisteredNodeIds() {
+    final ILock lock = hazelcastInstance.getLock("orientdb." + CONFIG_REGISTEREDNODES);
+    lock.lock();
+    try {
+      // RE-CREATE THE CFG IN LOCK
+      registeredNodeById.clear();
+      registeredNodeByName.clear();
+
+      final ODocument registeredNodesFromCluster = new ODocument();
+
+      final String registeredNodesFromClusterAsJson = (String) configurationMap.get(CONFIG_REGISTEREDNODES);
+      if (registeredNodesFromClusterAsJson != null) {
+        registeredNodesFromCluster.fromJSON(registeredNodesFromClusterAsJson);
+        registeredNodeById.addAll((Collection<? extends String>) registeredNodesFromCluster.field("ids", OType.EMBEDDEDLIST));
+        registeredNodeByName
+            .putAll((Map<? extends String, ? extends Integer>) registeredNodesFromCluster.field("names", OType.EMBEDDEDMAP));
+
+        if (registeredNodeByName.containsKey(nodeName)) {
+          nodeId = registeredNodeByName.get(nodeName);
+        } else {
+          // ADD CURRENT NODE
+          registeredNodeById.add(nodeName);
+          nodeId = registeredNodeById.size() - 1;
+          registeredNodeByName.put(nodeName, nodeId);
+        }
+      } else {
+        if (hazelcastInstance.getCluster().getMembers().size() <= 1) {
+          // FIRST TIME: CREATE NEW CFG
+          nodeId = 0;
+          registeredNodeById.add(nodeName);
+          registeredNodeByName.put(nodeName, nodeId);
+
+        } else
+          // NO CONFIG_REGISTEREDNODES, BUT MORE THAN ONE NODE PRESENT: REPAIR THE CONFIGURATION
+          repairActiveServers();
+      }
+
+      ODistributedServerLog.info(this, getLocalNodeName(), null, DIRECTION.NONE, "Registered local server with nodeId=%d", nodeId);
+
+      registeredNodesFromCluster.field("ids", registeredNodeById, OType.EMBEDDEDLIST);
+      registeredNodesFromCluster.field("names", registeredNodeByName, OType.EMBEDDEDMAP);
+
+      configurationMap.put(CONFIG_REGISTEREDNODES, registeredNodesFromCluster.toJSON());
+
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  private void repairActiveServers() {
+    ODistributedServerLog.warn(this, nodeName, null, DIRECTION.NONE,
+        "Error on retrieving '%s' from cluster configuration. Repairing the configuration...", CONFIG_REGISTEREDNODES);
+
+    final Set<Member> members = hazelcastInstance.getCluster().getMembers();
+
+    for (Member m : members) {
+      final ODocument node = (ODocument) configurationMap.get(CONFIG_NODE_PREFIX + m.getUuid());
+      if (node != null) {
+        final String mName = node.field("name");
+        final Integer mId = node.field("id");
+
+        if (nodeName.equals(mName))
+          nodeId = mId;
+
+        if (mId >= registeredNodeById.size()) {
+          // CREATE EMPTY ENTRIES IF NEEDED
+          while (mId > registeredNodeById.size()) {
+            registeredNodeById.add(null);
+          }
+          registeredNodeById.add(mName);
+        } else
+          registeredNodeById.set(mId, mName);
+
+        registeredNodeByName.put(mName, mId);
+      }
+    }
+
+    ODistributedServerLog
+        .warn(this, nodeName, null, DIRECTION.NONE, "Repairing of '%s' completed, registered %d servers", CONFIG_REGISTEREDNODES,
+            members.size());
+  }
+
+  @Override
+  public boolean isWriteQuorumPresent(final String databaseName) {
+    final ODistributedConfiguration cfg = getDatabaseConfiguration(databaseName);
+    if (cfg != null) {
+      final int availableServers = getAvailableNodes(databaseName);
+      if (availableServers == 0)
+        return false;
+
+      final int quorum = cfg.getWriteQuorum(null, cfg.getMasterServers().size(), getLocalNodeName());
+      return availableServers >= quorum;
+    }
+    return false;
+  }
+
+  @Override
+  public int getNodeIdByName(final String name) {
+    int id = super.getNodeIdByName(name);
+    if (name == null) {
+      repairActiveServers();
+      id = super.getNodeIdByName(name);
+    }
+    return id;
+  }
+
+  @Override
+  public String getNodeNameById(final int id) {
+    String name = super.getNodeNameById(id);
+    if (name == null) {
+      repairActiveServers();
+      name = super.getNodeNameById(id);
+    }
+    return name;
+  }
+
+  protected void waitStartupIsCompleted() throws InterruptedException {
+    long totalReceivedRequests = getMessageService().getReceivedRequests();
+    long totalProcessedRequests = getMessageService().getProcessedRequests();
+
+    final long start = System.currentTimeMillis();
+    while (totalProcessedRequests < totalReceivedRequests - 2 && (System.currentTimeMillis() - start
+        < OGlobalConfiguration.DISTRIBUTED_MAX_STARTUP_DELAY.getValueAsInteger())) {
+      Thread.sleep(300);
+      totalProcessedRequests = getMessageService().getProcessedRequests();
+      totalReceivedRequests = getMessageService().getReceivedRequests();
+    }
+
+    serverStarted.countDown();
+  }
+
+  protected void publishLocalNodeConfiguration() {
+    try {
+      final ODocument cfg = getLocalNodeConfiguration();
+      ORecordInternal.setRecordSerializer(cfg, ODatabaseDocumentTx.getDefaultSerializer());
+      configurationMap.put(CONFIG_NODE_PREFIX + nodeUuid, cfg);
+    } catch (Throwable t) {
+      ODistributedServerLog.error(this, nodeName, null, DIRECTION.NONE, "Error on publishing local server configuration");
+    }
+  }
+
+  protected void dumpStats() {
+    try {
+      final ODocument clusterCfg = getClusterConfiguration();
+
+      final Set<String> dbs = getManagedDatabases();
+
+      final StringBuilder buffer = new StringBuilder(8192);
+
+      buffer.append(ODistributedOutput.formatLatency(this, clusterCfg));
+      buffer.append(ODistributedOutput.formatMessages(this, clusterCfg));
+
+      OLogManager.instance().flush();
+      for (String db : dbs) {
+        buffer.append(messageService.getDatabase(db).dump());
+      }
+
+      // DUMP HA STATS
+      System.out.println(buffer);
+
+    } catch (Throwable t) {
+      ODistributedServerLog.error(this, nodeName, null, DIRECTION.NONE, "Error on printing HA stats");
     }
   }
 
   @Override
-  public long getDistributedTime(final long iTime) {
-    return iTime - timeOffset;
+  public Throwable convertException(final Throwable original) {
+    if (!Orient.instance().isActive() || isOffline())
+      return new OOfflineNodeException("Server " + nodeName + " is offline");
+
+    if (original instanceof HazelcastException || original instanceof HazelcastInstanceNotActiveException)
+      return new IOException("Hazelcast wrapped exception: " + original.getMessage(), original.getCause());
+
+    if (original instanceof IllegalMonitorStateException)
+      // THIS IS RAISED WHEN INTERNAL LOCKING IS BROKEN BECAUSE HARD SHUTDOWN
+      return new IOException("Illegal monitor state: " + original.getMessage(), original.getCause());
+
+    return original;
   }
 
   @Override
-  public void sendShutdown() {
-    shutdown();
+  public long getClusterTime() {
+    try {
+      return hazelcastInstance.getCluster().getClusterTime();
+    } catch (HazelcastInstanceNotActiveException e) {
+      return -1;
+    }
   }
 
   @Override
@@ -206,21 +520,49 @@ public class OHazelcastPlugin extends ODistributedAbstractPlugin implements Memb
     if (!enabled)
       return;
 
-    super.shutdown();
+    Orient.instance().getSignalHandler().unregisterListener(signalListener);
 
-    OLogManager.instance().warn(this, "Shutting down node %s...", getLocalNodeName());
-    setNodeStatus(NODE_STATUS.SHUTDOWNING);
+    for (OServerNetworkListener nl : serverInstance.getNetworkListeners())
+      nl.unregisterBeforeConnectNetworkEventListener(this);
 
-    if (messageService != null)
-      messageService.shutdown();
+    OLogManager.instance().warn(this, "Shutting down node '%s'...", nodeName);
+    setNodeStatus(NODE_STATUS.SHUTTINGDOWN);
 
-    activeNodes.clear();
-    if (membershipListenerRegistration != null) {
-      hazelcastInstance.getCluster().removeMembershipListener(membershipListenerRegistration);
+    try {
+      final Set<String> databases = new HashSet<String>();
+
+      if (hazelcastInstance.getLifecycleService().isRunning())
+        for (Map.Entry<String, Object> entry : configurationMap.entrySet()) {
+          if (entry.getKey().toString().startsWith(CONFIG_DBSTATUS_PREFIX)) {
+
+            final String nodeDb = entry.getKey().toString().substring(CONFIG_DBSTATUS_PREFIX.length());
+
+            if (nodeDb.startsWith(nodeName))
+              databases.add(entry.getKey());
+          }
+        }
+
+      // PUT DATABASES AS NOT_AVAILABLE
+      for (String k : databases)
+        configurationMap.put(k, DB_STATUS.NOT_AVAILABLE);
+
+    } catch (HazelcastInstanceNotActiveException e) {
+      // HZ IS ALREADY DOWN, IGNORE IT
     }
 
-    // AVOID TO REMOVE THE CFG TO PREVENT OTHER NODES TO UN-REGISTER IT
-    // getConfigurationMap().remove(CONFIG_NODE_PREFIX + getLocalNodeId());
+    try {
+      super.shutdown();
+    } catch (HazelcastInstanceNotActiveException e) {
+      // HZ IS ALREADY DOWN, IGNORE IT
+    }
+
+    if (membershipListenerRegistration != null) {
+      try {
+        hazelcastInstance.getCluster().removeMembershipListener(membershipListenerRegistration);
+      } catch (HazelcastInstanceNotActiveException e) {
+        // HZ IS ALREADY DOWN, IGNORE IT
+      }
+    }
 
     if (hazelcastInstance != null)
       try {
@@ -231,486 +573,117 @@ public class OHazelcastPlugin extends ODistributedAbstractPlugin implements Memb
         hazelcastInstance = null;
       }
 
+    OCallableUtils.executeIgnoringAnyExceptions(new OCallableNoParamNoReturn() {
+      @Override
+      public void call() {
+        configurationMap.destroy();
+      }
+    });
+
+    OCallableUtils.executeIgnoringAnyExceptions(new OCallableNoParamNoReturn() {
+      @Override
+      public void call() {
+        configurationMap.getHazelcastMap().removeEntryListener(membershipListenerMapRegistration);
+      }
+    });
+
     setNodeStatus(NODE_STATUS.OFFLINE);
   }
 
-  @Override
-  public ODocument getClusterConfiguration() {
-    if (!enabled)
-      return null;
+  public ORemoteServerController getRemoteServer(final String rNodeName) throws IOException {
+    if (rNodeName == null)
+      throw new IllegalArgumentException("Server name is NULL");
 
-    final ODocument cluster = new ODocument();
+// TODO: check if it's possible to bypass remote call
+//    if (rNodeName.equalsIgnoreCase(getLocalNodeName()))
+//      throw new IllegalArgumentException("Cannot send remote message to the local server");
 
-    final HazelcastInstance instance = getHazelcastInstance();
+    ORemoteServerController remoteServer = remoteServers.get(rNodeName);
+    if (remoteServer == null) {
+      Member member = activeNodes.get(rNodeName);
+      if (member == null) {
+        // SYNC PROBLEMS? TRY TO RETRIEVE THE SERVER INFORMATION FROM THE CLUSTER MAP
+        for (Iterator<Map.Entry<String, Object>> it = getConfigurationMap().localEntrySet().iterator(); it.hasNext(); ) {
+          final Map.Entry<String, Object> entry = it.next();
+          if (entry.getKey().startsWith(CONFIG_NODE_PREFIX)) {
+            final ODocument nodeCfg = (ODocument) entry.getValue();
+            if (rNodeName.equals(nodeCfg.field("name"))) {
+              // FOUND: USE THIS
+              final String uuid = entry.getKey().substring(CONFIG_NODE_PREFIX.length());
 
-    cluster.field("localName", instance.getName());
-    cluster.field("localId", instance.getCluster().getLocalMember().getUuid());
-
-    // INSERT MEMBERS
-    final List<ODocument> members = new ArrayList<ODocument>();
-    cluster.field("members", members, OType.EMBEDDEDLIST);
-    // members.add(getLocalNodeConfiguration());
-    for (Member member : activeNodes.values()) {
-      members.add(getNodeConfigurationById(member.getUuid()));
-    }
-
-    return cluster;
-  }
-
-  public ODocument getNodeConfigurationById(final String iNodeId) {
-    return (ODocument) getConfigurationMap().get(CONFIG_NODE_PREFIX + iNodeId);
-  }
-
-  @Override
-  public ODocument getLocalNodeConfiguration() {
-    final ODocument nodeCfg = new ODocument();
-
-    nodeCfg.field("id", getLocalNodeId());
-    nodeCfg.field("name", getLocalNodeName());
-    nodeCfg.field("startedOn", startedOn);
-
-    List<Map<String, Object>> listeners = new ArrayList<Map<String, Object>>();
-    nodeCfg.field("listeners", listeners, OType.EMBEDDEDLIST);
-
-    for (OServerNetworkListener listener : serverInstance.getNetworkListeners()) {
-      final Map<String, Object> listenerCfg = new HashMap<String, Object>();
-      listeners.add(listenerCfg);
-
-      listenerCfg.put("protocol", listener.getProtocolType().getSimpleName());
-      listenerCfg.put("listen", listener.getListeningAddress(true));
-    }
-    nodeCfg.field("databases", getManagedDatabases());
-
-    return nodeCfg;
-  }
-
-  public boolean isEnabled() {
-    return enabled;
-  }
-
-  public NODE_STATUS getNodeStatus() {
-    return status;
-  }
-
-  @Override
-  public void setNodeStatus(final NODE_STATUS iStatus) {
-    if (status.equals(iStatus))
-      // NO CHANGE
-      return;
-
-    status = iStatus;
-
-    ODistributedServerLog.warn(this, getLocalNodeName(), null, DIRECTION.NONE, "updated node status to '%s'", status);
-  }
-
-  public boolean checkNodeStatus(final NODE_STATUS iStatus2Check) {
-    return status.equals(iStatus2Check);
-  }
-
-  @Override
-  public DB_STATUS getDatabaseStatus(final String iNode, final String iDatabaseName) {
-    if (!activeNodes.containsKey(iNode))
-      return DB_STATUS.OFFLINE;
-
-    final DB_STATUS status = (DB_STATUS) getConfigurationMap().get(
-        OHazelcastPlugin.CONFIG_DBSTATUS_PREFIX + iNode + "." + iDatabaseName);
-    return status != null ? status : DB_STATUS.OFFLINE;
-  }
-
-  @Override
-  public void setDatabaseStatus(final String iNode, final String iDatabaseName, final DB_STATUS iStatus) {
-    getConfigurationMap().put(OHazelcastPlugin.CONFIG_DBSTATUS_PREFIX + iNode + "." + iDatabaseName, iStatus);
-  }
-
-  @Override
-  public Object sendRequest(final String iDatabaseName, final Collection<String> iClusterNames,
-      final Collection<String> iTargetNodes, final OAbstractRemoteTask iTask, final EXECUTION_MODE iExecutionMode) {
-
-    checkForClusterRebalance(iDatabaseName);
-
-    final OHazelcastDistributedRequest req = new OHazelcastDistributedRequest(getLocalNodeName(), iDatabaseName, iTask,
-        iExecutionMode);
-
-    final ODatabaseRecord currentDatabase = ODatabaseRecordThreadLocal.INSTANCE.getIfDefined();
-    if (currentDatabase != null && currentDatabase.getUser() != null)
-      // SET CURRENT DATABASE NAME
-      req.setUserName(currentDatabase.getUser().getName());
-
-    final OHazelcastDistributedDatabase db = messageService.getDatabase(iDatabaseName);
-
-    if (iTargetNodes == null || iTargetNodes.isEmpty()) {
-      ODistributedServerLog.error(this, getLocalNodeName(), null, DIRECTION.OUT,
-          "No nodes configured for partition '%s.%s' request: %s", iDatabaseName, iClusterNames, req);
-      throw new ODistributedException("No nodes configured for partition '" + iDatabaseName + "." + iClusterNames + "' request: "
-          + req);
-    }
-
-    final ODistributedResponse response = db.send2Nodes(req, iClusterNames, iTargetNodes, iExecutionMode);
-    if (response != null)
-      return response.getPayload();
-
-    return null;
-  }
-
-  public Set<String> getManagedDatabases() {
-    return messageService != null ? messageService.getDatabases() : Collections.EMPTY_SET;
-  }
-
-  public String getLocalNodeName() {
-    return nodeName;
-  }
-
-  @Override
-  public String getLocalNodeId() {
-    return nodeId;
-  }
-
-  @Override
-  public void onCreate(final ODatabaseInternal iDatabase) {
-    final OHazelcastDistributedDatabase distribDatabase = messageService.registerDatabase(iDatabase.getName());
-    distribDatabase.configureDatabase(false, false).setOnline();
-    onOpen(iDatabase);
-  }
-
-  /**
-   * Auto register myself as hook.
-   */
-  @Override
-  public void onOpen(final ODatabaseInternal iDatabase) {
-    final String dbUrl = OSystemVariableResolver.resolveSystemVariables(iDatabase.getURL());
-
-    if (dbUrl.startsWith("plocal:")) {
-      // CHECK SPECIAL CASE WITH MULTIPLE SERVER INSTANCES ON THE SAME JVM
-      final String dbDirectory = serverInstance.getDatabaseDirectory();
-      if (!dbUrl.substring("plocal:".length()).startsWith(dbDirectory))
-        // SKIP IT: THIS HAPPENS ONLY ON MULTIPLE SERVER INSTANCES ON THE SAME JVM
-        return;
-    } else if (dbUrl.startsWith("remote:"))
-      return;
-
-    synchronized (cachedDatabaseConfiguration) {
-      final ODistributedConfiguration cfg = getDatabaseConfiguration(iDatabase.getName());
-      if (cfg == null)
-        return;
-
-      if (iDatabase instanceof ODatabaseComplex<?> && !(iDatabase.getStorage() instanceof ODistributedStorage)) {
-        ODistributedStorage storage = storages.get(iDatabase.getURL());
-        if (storage == null) {
-          storage = new ODistributedStorage(serverInstance, (OStorageEmbedded) iDatabase.getStorage());
-          final ODistributedStorage oldStorage = storages.putIfAbsent(iDatabase.getURL(), storage);
-          if (oldStorage != null)
-            storage = oldStorage;
-        }
-
-        iDatabase.replaceStorage(storage);
-
-        // OVERWRITE CLUSTER SELECTION STRATEGY
-        final String nodeName = getLocalNodeName();
-        final ODistributedConfiguration dbCfg = getDatabaseConfiguration(iDatabase.getName());
-
-        final OSchema schema = ((ODatabaseComplexInternal<?>) iDatabase).getDatabaseOwner().getMetadata().getSchema();
-
-        final Set<String> cfgClusterNames = new HashSet<String>();
-        for (String c : cfg.getClusterNames())
-          cfgClusterNames.add(c);
-
-        boolean distribCfgDirty = false;
-        for (OClass c : schema.getClasses()) {
-          ((OClassImpl) c).setClusterSelectionInternal(new OLocalClusterStrategy(this, iDatabase.getName(), c));
-
-          if (!c.isAbstract()) {
-            final int[] clusterIds = c.getClusterIds();
-            final List<String> clusterNames = new ArrayList<String>(clusterIds.length);
-            for (int clusterId : clusterIds)
-              clusterNames.add(iDatabase.getClusterNameById(clusterId));
-
-            String bestCluster = cfg.getLocalCluster(clusterNames, nodeName);
-            if (bestCluster == null) {
-              distribCfgDirty = true;
-              // TRY TO FIND A CLUSTER PREVIOUSLY ASSIGNED TO THE LOCAL NODE
-              final String newClusterName = (c.getName() + "_" + getLocalNodeName()).toLowerCase();
-
-              if (cfgClusterNames.contains(newClusterName)) {
-                // FOUND A CLUSTER PREVIOUSLY ASSIGNED TO THE LOCAL ONE: CHANGE ASSIGNMENT TO LOCAL NODE AGAIN
-                OLogManager.instance().warn(this, "class %s, change mastership of cluster '%s' to local node '%s'", c,
-                    newClusterName, nodeName);
-                cfg.setMasterServer(newClusterName, nodeName);
-              } else {
-                // CREATE A NEW CLUSTER WHERE LOCAL NODE IS THE MASTER
-                OLogManager.instance().warn(this, "class %s, creation of new local cluster '%s'", c, newClusterName);
-
-                OScenarioThreadLocal.INSTANCE.set(OScenarioThreadLocal.RUN_MODE.DEFAULT);
-                try {
-                  c.addCluster(newClusterName);
-                } finally {
-                  OScenarioThreadLocal.INSTANCE.set(OScenarioThreadLocal.RUN_MODE.RUNNING_DISTRIBUTED);
+              for (Member m : hazelcastInstance.getCluster().getMembers()) {
+                if (m.getUuid().equals(uuid)) {
+                  member = m;
+                  registerNode(member, rNodeName);
+                  break;
                 }
-
-                OLogManager.instance().warn(this, "class %s, set mastership of cluster '%s' (id=%d) to '%s'", c, newClusterName,
-                    iDatabase.getClusterIdByName(newClusterName), nodeName);
-                cfg.setMasterServer(newClusterName, nodeName);
               }
             }
           }
         }
 
-        if (distribCfgDirty) {
-          OLogManager.instance().warn(this, "Distributed configuration modified");
-          updateCachedDatabaseConfiguration(iDatabase.getName(), cfg.serialize(), true, true);
-        }
+        if (member == null)
+          throw new ODistributedException("Cannot find node '" + rNodeName + "'");
       }
 
-    }
-  }
+      for (int retry = 0; retry < 20; ++retry) {
+        ODocument cfg = getNodeConfigurationByUuid(member.getUuid(), false);
+        if (cfg == null || cfg.field("listeners") == null) {
+          try {
+            Thread.sleep(100);
+            continue;
 
-  @SuppressWarnings("unchecked")
-  public ODocument getStats() {
-    final ODocument doc = new ODocument();
-
-    final Map<String, HashMap<String, Object>> nodes = new HashMap<String, HashMap<String, Object>>();
-    doc.field("nodes", nodes);
-
-    Map<String, Object> localNode = new HashMap<String, Object>();
-    doc.field("localNode", localNode);
-
-    localNode.put("name", getLocalNodeName());
-    localNode.put("averageResponseTime", messageService.getAverageResponseTime());
-
-    Map<String, Object> databases = new HashMap<String, Object>();
-    localNode.put("databases", databases);
-    for (String dbName : messageService.getDatabases()) {
-      Map<String, Object> db = new HashMap<String, Object>();
-      databases.put(dbName, db);
-    }
-
-    for (Entry<String, QueueConfig> entry : hazelcastInstance.getConfig().getQueueConfigs().entrySet()) {
-      final String queueName = entry.getKey();
-
-      if (!queueName.startsWith(OHazelcastDistributedMessageService.NODE_QUEUE_PREFIX))
-        continue;
-
-      final IQueue<Object> queue = hazelcastInstance.getQueue(queueName);
-
-      final String[] names = queueName.split("\\.");
-
-      HashMap<String, Object> node = nodes.get(names[2]);
-      if (node == null) {
-        node = new HashMap<String, Object>();
-        nodes.put(names[2], node);
-      }
-
-      if (names[3].equals("response")) {
-        node.put("responses", queue.size());
-      } else {
-        final String dbName = names[3];
-
-        Map<String, Object> db = (HashMap<String, Object>) node.get(dbName);
-        if (db == null) {
-          db = new HashMap<String, Object>(2);
-          node.put(dbName, db);
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ODistributedException("Cannot find node '" + rNodeName + "'");
+          }
         }
 
-        db.put("requests", queue.size());
-        final Object lastMessage = queue.peek();
-        if (lastMessage != null)
-          db.put("lastMessage", lastMessage.toString());
-      }
-    }
+        final String url = ODistributedAbstractPlugin.getListeningBinaryAddress(cfg);
 
-    return doc;
-  }
-
-  public String getNodeName(final Member iMember) {
-    if (iMember == null)
-      return "?";
-
-    final ODocument cfg = getNodeConfigurationById(iMember.getUuid());
-    if (cfg != null)
-      return cfg.field("name");
-
-    return "ext:" + iMember.getUuid();
-  }
-
-  public Set<String> getRemoteNodeIds() {
-    return activeNodes.keySet();
-  }
-
-  @Override
-  public void memberAdded(final MembershipEvent iEvent) {
-    updateLastClusterChange();
-    ODistributedServerLog.warn(this, getLocalNodeName(), null, DIRECTION.NONE, "added new node id=%s name=%s", iEvent.getMember(),
-        getNodeName(iEvent.getMember()));
-  }
-
-  @Override
-  public void updateLastClusterChange() {
-    lastClusterChangeOn = System.currentTimeMillis();
-  }
-
-  /**
-   * Removes the node map entry.
-   */
-  @Override
-  public void memberRemoved(final MembershipEvent iEvent) {
-    updateLastClusterChange();
-    ODistributedServerLog.warn(this, getLocalNodeName(), null, DIRECTION.NONE, "node removed id=%s name=%s", iEvent.getMember(),
-        getNodeName(iEvent.getMember()));
-
-    final Member member = iEvent.getMember();
-
-    final String nodeName = getNodeName(member);
-    if (nodeName != null) {
-      activeNodes.remove(nodeName);
-
-      // REMOVE NODE IN DB CFG
-      if (messageService != null)
-        messageService.handleUnreachableNode(nodeName);
-    }
-
-    OClientConnectionManager.instance().pushDistribCfg2Clients(getClusterConfiguration());
-  }
-
-  @Override
-  public void memberAttributeChanged(MemberAttributeEvent memberAttributeEvent) {
-  }
-
-  @Override
-  public void entryAdded(final EntryEvent<String, Object> iEvent) {
-    if (iEvent.getMember() == null)
-      // IGNORE IT
-      return;
-
-    final String key = iEvent.getKey();
-    if (key.startsWith(CONFIG_NODE_PREFIX)) {
-      if (!iEvent.getMember().equals(hazelcastInstance.getCluster().getLocalMember())) {
-        final ODocument cfg = (ODocument) iEvent.getValue();
-        final String nodeName = (String) cfg.field("name");
-
-        if (nodeName.equals(getLocalNodeName())) {
-          ODistributedServerLog.error(this, getLocalNodeName(), getNodeName(iEvent.getMember()), DIRECTION.IN,
-              "Found a new node with the same name as current: '" + nodeName
-                  + "'. The node has been excluded. Change the name in its config/orientdb-dserver-config.xml file");
-
-          throw new ODistributedException("Found a new node with the same name as current: '" + nodeName
-              + "'. The node has been excluded. Change the name in its config/orientdb-dserver-config.xml file");
+        if (url == null) {
+          closeRemoteServer(rNodeName);
+          throw new ODatabaseException("Cannot connect to a remote node because the url was not found");
         }
 
-        activeNodes.put(nodeName, (Member) iEvent.getMember());
+        final String userPassword = cfg.field("user_replicator");
 
-        ODistributedServerLog.info(this, getLocalNodeName(), getNodeName(iEvent.getMember()), DIRECTION.IN,
-            "added node configuration id=%s name=%s, now %d nodes are configured", iEvent.getMember(),
-            getNodeName(iEvent.getMember()), activeNodes.size());
+        if (userPassword != null) {
+          // OK
+          remoteServer = new ORemoteServerController(this, rNodeName, url, REPLICATOR_USER, userPassword);
+          final ORemoteServerController old = remoteServers.putIfAbsent(rNodeName, remoteServer);
+          if (old != null) {
+            remoteServer.close();
+            remoteServer = old;
+          }
+          break;
+        }
 
-        installNewDatabases(false);
+        // RETRY TO GET USR+PASSWORD IN A WHILE
+        try {
+          Thread.sleep(100);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          throw new OInterruptedException("Cannot connect to remote sevrer " + rNodeName);
+        }
+
       }
-
-    } else if (key.startsWith(CONFIG_DATABASE_PREFIX)) {
-      updateCachedDatabaseConfiguration(key.substring(CONFIG_DATABASE_PREFIX.length()), (ODocument) iEvent.getValue(), true, false);
-      OClientConnectionManager.instance().pushDistribCfg2Clients(getClusterConfiguration());
-
-      if (!iEvent.getMember().equals(hazelcastInstance.getCluster().getLocalMember()))
-        installNewDatabases(false);
-
-    } else if (key.startsWith(CONFIG_DBSTATUS_PREFIX)) {
-      ODistributedServerLog.info(this, getLocalNodeName(), getNodeName(iEvent.getMember()), DIRECTION.IN,
-          "received added status %s=%s", key.substring(CONFIG_DBSTATUS_PREFIX.length()), iEvent.getValue());
     }
-  }
 
-  @Override
-  public void entryUpdated(final EntryEvent<String, Object> iEvent) {
-    final String key = iEvent.getKey();
-    final String eventNodeName = getNodeName(iEvent.getMember());
+    if (remoteServer == null)
+      throw new ODistributedException("Cannot find node '" + rNodeName + "'");
 
-    if (key.startsWith(CONFIG_NODE_PREFIX)) {
-      ODistributedServerLog.info(this, getLocalNodeName(), eventNodeName, DIRECTION.NONE,
-          "updated node configuration id=%s name=%s", iEvent.getMember(), eventNodeName);
-
-      final ODocument cfg = (ODocument) iEvent.getValue();
-      activeNodes.put((String) cfg.field("name"), (Member) iEvent.getMember());
-      updateLastClusterChange();
-
-    } else if (key.startsWith(CONFIG_DATABASE_PREFIX)) {
-      if (!iEvent.getMember().equals(hazelcastInstance.getCluster().getLocalMember())) {
-        final String dbName = key.substring(CONFIG_DATABASE_PREFIX.length());
-
-        ODistributedServerLog.info(this, getLocalNodeName(), eventNodeName, DIRECTION.NONE, "update configuration db=%s", dbName);
-
-        updateLastClusterChange();
-
-        installNewDatabases(false);
-        updateCachedDatabaseConfiguration(dbName, (ODocument) iEvent.getValue(), true, false);
-        OClientConnectionManager.instance().pushDistribCfg2Clients(getClusterConfiguration());
-
-        updateLastClusterChange();
-      }
-    } else if (key.startsWith(CONFIG_DBSTATUS_PREFIX)) {
-      ODistributedServerLog.info(this, getLocalNodeName(), eventNodeName, DIRECTION.IN, "received updated status %s=%s",
-          key.substring(CONFIG_DBSTATUS_PREFIX.length()), iEvent.getValue());
-
-      updateLastClusterChange();
-    }
-  }
-
-  @Override
-  public void entryRemoved(final EntryEvent<String, Object> iEvent) {
-    final String key = iEvent.getKey();
-    if (key.startsWith(CONFIG_NODE_PREFIX)) {
-      final String nName = getNodeName(iEvent.getMember());
-      if (nName != null) {
-        ODistributedServerLog.info(this, getLocalNodeName(), null, DIRECTION.NONE, "removed node configuration id=%s name=%s",
-            iEvent.getMember(), nName);
-        activeNodes.remove(nName);
-      }
-
-      updateLastClusterChange();
-
-    } else if (key.startsWith(CONFIG_DATABASE_PREFIX)) {
-      synchronized (cachedDatabaseConfiguration) {
-        cachedDatabaseConfiguration.remove(key.substring(CONFIG_DATABASE_PREFIX.length()));
-      }
-      updateLastClusterChange();
-
-    } else if (key.startsWith(CONFIG_DBSTATUS_PREFIX)) {
-      ODistributedServerLog.info(this, getLocalNodeName(), getNodeName(iEvent.getMember()), DIRECTION.IN,
-          "received removed status %s=%s", key.substring(CONFIG_DBSTATUS_PREFIX.length()), iEvent.getValue());
-      updateLastClusterChange();
-    }
-  }
-
-  @Override
-  public void entryEvicted(EntryEvent<String, Object> iEvent) {
-  }
-
-  @Override
-  public void mapEvicted(MapEvent event) {
-
-  }
-
-  @Override
-  public void mapCleared(MapEvent event) {
-
-  }
-
-  @Override
-  public boolean isNodeAvailable(final String iNodeName, final String iDatabaseName) {
-    return getDatabaseStatus(iNodeName, iDatabaseName) != DB_STATUS.OFFLINE;
-  }
-
-  public boolean isOffline() {
-    return status != NODE_STATUS.ONLINE;
-  }
-
-  public void waitUntilOnline() throws InterruptedException {
-    while (!status.equals(NODE_STATUS.ONLINE))
-      Thread.sleep(100);
+    return remoteServer;
   }
 
   public HazelcastInstance getHazelcastInstance() {
-    while (hazelcastInstance == null) {
-      // WAIT UNTIL THE INSTANCE IS READY
+    for (int retry = 1; hazelcastInstance == null && !Thread.currentThread().isInterrupted(); ++retry) {
+      if (retry > 25)
+        throw new ODistributedException("Hazelcast instance is not available");
+
+      // WAIT UNTIL THE INSTANCE IS READY, FOR MAXIMUM 5 SECS (25 x 200ms)
       try {
-        Thread.sleep(100);
+        Thread.sleep(200);
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         break;
@@ -719,429 +692,991 @@ public class OHazelcastPlugin extends ODistributedAbstractPlugin implements Memb
     return hazelcastInstance;
   }
 
-  public Lock getLock(final String iName) {
-    return getHazelcastInstance().getLock(iName);
-  }
-
-  public Class<? extends OReplicationConflictResolver> getConfictResolverClass() {
-    return confictResolverClass;
-  }
-
-  @Override
-  public String toString() {
-    return getLocalNodeName();
-  }
-
-  /**
-   * Executes the request on local node. In case of error returns the Exception itself
-   */
-  public Serializable executeOnLocalNode(final ODistributedRequest req, final ODatabaseDocumentTx database) {
-    if (database != null && !(database.getStorage() instanceof ODistributedStorage))
-      throw new ODistributedException("Distributed storage was not installed for database '" + database.getName()
-          + "'. Implementation found: " + database.getStorage().getClass().getName());
-
-    final OAbstractRemoteTask task = req.getTask();
-
-    try {
-      if (database != null)
-        ((ODistributedStorage) database.getStorage()).setLastOperationId(req.getId());
-
-      final Serializable result = (Serializable) task.execute(serverInstance, this, database);
-
-      if (result instanceof Throwable)
-        ODistributedServerLog.error(this, getLocalNodeName(), req.getSenderNodeName(), DIRECTION.IN,
-            "error on executing request %d (%s) on local node: ", (Throwable) result, req.getId(), req != null ? req.getTask()
-                : "-");
-
-      return result;
-
-    } catch (Throwable e) {
-      ODistributedServerLog.error(this, getLocalNodeName(), req.getSenderNodeName(), DIRECTION.IN,
-          "error on executing distributed request %d on local node: %s", e, req.getId(), req != null ? req.getTask() : "-");
-
-      return e;
-    }
-  }
-
-  @Override
-  public OHazelcastDistributedMessageService getMessageService() {
-    return messageService;
-  }
-
-  public void updateCachedDatabaseConfiguration(String iDatabaseName, ODocument cfg, boolean iSaveToDisk, boolean iDeployToCluster) {
-    final boolean updated = super.updateCachedDatabaseConfiguration(iDatabaseName, cfg, iSaveToDisk);
-
-    if (updated && iDeployToCluster)
-      // DEPLOY THE CONFIGURATION TO THE CLUSTER
-      getConfigurationMap().put(OHazelcastPlugin.CONFIG_DATABASE_PREFIX + iDatabaseName, cfg);
-  }
-
-  public long getLastClusterChangeOn() {
-    return lastClusterChangeOn;
-  }
-
-  @Override
-  public void onMessage(String iText) {
-    OLogManager.instance().info(this, iText);
-  }
-
-  public int getAvailableNodes(final String iDatabaseName) {
-    int availableNodes = 0;
-    for (Map.Entry<String, Member> entry : activeNodes.entrySet()) {
-      if (isNodeAvailable(entry.getKey(), iDatabaseName))
-        availableNodes++;
-    }
-    return availableNodes;
-  }
-
-  @Override
-  public Map<String, Object> getConfigurationMap() {
-    return getHazelcastInstance().getMap("orientdb");
-  }
-
-  public boolean installDatabase(boolean iStartup, String databaseName, ODocument config) {
-
-    final Boolean hotAlignment = config.field("hotAlignment");
-    final String dbPath = serverInstance.getDatabaseDirectory() + databaseName;
-
-    final Set<String> configuredDatabases = serverInstance.getAvailableStorageNames().keySet();
-    if (configuredDatabases.contains(databaseName)) {
-      if (iStartup && hotAlignment != null && !hotAlignment) {
-        // DROP THE DATABASE ON CURRENT NODE
-        ODistributedServerLog.warn(this, getLocalNodeName(), null, DIRECTION.NONE,
-            "dropping local database '%s' in '%s' and get a fresh copy from a remote node...", databaseName, dbPath);
-
-        Orient.instance().unregisterStorageByName(databaseName);
-
-        OFileUtils.deleteRecursively(new File(dbPath));
-      } else
-        // HOT ALIGNMENT RUNNING, DON'T INSTALL THE DB FROM SCRATCH BUT RATHER LET TO THE NODE TO ALIGN BY READING THE QUEUE
-        return false;
-    }
-
-    final OHazelcastDistributedDatabase distrDatabase = messageService.registerDatabase(databaseName);
-
-    try {
-      Thread.sleep(2000 * activeNodes.size());
-    } catch (InterruptedException e) {
-      e.printStackTrace();
-    }
-
-    // CREATE THE DISTRIBUTED QUEUE
-    String queueName = OHazelcastDistributedMessageService.getRequestQueueName(messageService.manager.getLocalNodeName(),
-        databaseName);
-    messageService.getQueue(queueName);
-
-    queueName = OHazelcastDistributedMessageService.getRequestQueueName(messageService.manager.getLocalNodeName(), databaseName
-        + OCreateRecordTask.SUFFIX_QUEUE_NAME);
-    messageService.getQueue(queueName);
-
-    final ODistributedConfiguration cfg = getDatabaseConfiguration(databaseName);
-
-    // GET ALL THE OTHER SERVERS
-    final Collection<String> nodes = cfg.getServers(null, getLocalNodeName());
-
-    ODistributedServerLog.warn(this, getLocalNodeName(), nodes.toString(), DIRECTION.OUT,
-        "requesting deploy of database '%s' on local server...", databaseName);
-
-    final Map<String, Object> results = (Map<String, Object>) sendRequest(databaseName, null, nodes, new ODeployDatabaseTask(null),
-        EXECUTION_MODE.RESPONSE);
-
-    ODistributedServerLog.warn(this, getLocalNodeName(), nodes.toString(), DIRECTION.OUT, "deploy returned: %s", results);
-
-    // EXTRACT THE REAL RESULT
-    for (Entry<String, Object> r : results.entrySet()) {
-      final Object value = r.getValue();
-
-      if (value instanceof Boolean) {
-        continue;
-      } else if (value instanceof Throwable) {
-        ODistributedServerLog.error(this, getLocalNodeName(), r.getKey(), DIRECTION.IN, "error on installing database %s in %s",
-            (Exception) value, databaseName, dbPath);
-      } else if (value instanceof ODistributedDatabaseChunk) {
-        ODistributedDatabaseChunk chunk = (ODistributedDatabaseChunk) value;
-
-        // DISCARD ALL THE MESSAGES BEFORE THE BACKUP
-        distrDatabase.setWaitForMessage(chunk.getLastOperationId() + 1);
-
-        final String fileName = Orient.getTempPath() + "install_" + databaseName + ".zip";
-
-        ODistributedServerLog.info(this, getLocalNodeName(), r.getKey(), DIRECTION.IN, "copying remote database '%s' to: %s",
-            databaseName, fileName);
-
-        final File file = new File(fileName);
-        if (file.exists())
-          file.delete();
-
-        try {
-          file.getParentFile().mkdirs();
-          file.createNewFile();
-        } catch (IOException e) {
-          throw new ODistributedException("Error on creating temp database file to install locally", e);
-        }
-
-        FileOutputStream out = null;
-        try {
-          out = new FileOutputStream(fileName, false);
-
-          long fileSize = writeDatabaseChunk(1, chunk, out);
-          for (int chunkNum = 2; !chunk.last; chunkNum++) {
-            final Object result = sendRequest(databaseName, null, Collections.singleton(r.getKey()), new OCopyDatabaseChunkTask(
-                chunk.filePath, chunkNum, chunk.offset + chunk.buffer.length), EXECUTION_MODE.RESPONSE);
-
-            if (result instanceof Boolean)
-              continue;
-            else if (result instanceof Exception) {
-              ODistributedServerLog.error(this, getLocalNodeName(), r.getKey(), DIRECTION.IN,
-                  "error on installing database %s in %s (chunk #%d)", (Exception) result, databaseName, dbPath, chunkNum);
-            } else if (result instanceof ODistributedDatabaseChunk) {
-              chunk = (ODistributedDatabaseChunk) result;
-              fileSize += writeDatabaseChunk(chunkNum, chunk, out);
-            }
-          }
-
-          ODistributedServerLog.info(this, getLocalNodeName(), null, DIRECTION.NONE, "database copied correctly, size=%s",
-              OFileUtils.getSizeAsString(fileSize));
-
-        } catch (Exception e) {
-          ODistributedServerLog.error(this, getLocalNodeName(), null, DIRECTION.NONE,
-              "error on transferring database '%s' to '%s'", e, databaseName, fileName);
-          throw new ODistributedException("Error on transferring database", e);
-        } finally {
-          try {
-            if (out != null) {
-              out.flush();
-              out.close();
-            }
-          } catch (IOException e) {
-          }
-        }
-
-        installDatabaseOnLocalNode(distrDatabase, databaseName, dbPath, r.getKey(), fileName);
-        distrDatabase.configureDatabase(false, true);
-
-        return true;
-
-      } else
-        throw new IllegalArgumentException("Type " + value + " not supported");
-    }
-
-    throw new ODistributedException("No response received from remote nodes for auto-deploy of database");
-
-  }
-
-  protected void assignNodeName() {
-    nodeName = OSystemVariableResolver.resolveVariable(NODE_NAME_ENV);
-
-    if (nodeName != null) {
-      nodeName = nodeName.trim();
-      if (nodeName.isEmpty())
-        nodeName = null;
-    }
-
-    if (nodeName == null) {
-      try {
-        // WAIT ANY LOG IS PRINTED
-        Thread.sleep(1000);
-      } catch (InterruptedException e) {
-      }
-
-      System.out.println();
-      System.out.println();
-      System.out.println("+----------------------------------------------------+");
-      System.out.println("|    WARNING: FIRST DISTRIBUTED RUN CONFIGURATION    |");
-      System.out.println("+----------------------------------------------------+");
-      System.out.println("| This is the first time that the server is running  |");
-      System.out.println("| as distributed. Please type the name you want      |");
-      System.out.println("| to assign to the current server node.              |");
-      System.out.println("+----------------------------------------------------+");
-      System.out.print("\nNode name [BLANK=auto generate it]: ");
-
-      OConsoleReader reader = new DefaultConsoleReader();
-      try {
-        nodeName = reader.readLine();
-      } catch (IOException e) {
-      }
-      if (nodeName != null) {
-        nodeName = nodeName.trim();
-        if (nodeName.isEmpty())
-          nodeName = null;
-      }
-    }
-
-    if (nodeName == null)
-      // GENERATE NODE NAME
-      this.nodeName = "node" + System.currentTimeMillis();
-
-    OLogManager.instance().warn(this, "Assigning distributed node name: %s", this.nodeName);
-
-    // SALVE THE NODE NAME IN CONFIGURATION
-    boolean found = false;
-    final OServerConfiguration cfg = serverInstance.getConfiguration();
-    for (OServerHandlerConfiguration h : cfg.handlers) {
-      if (h.clazz.equals(getClass().getName())) {
-        for (OServerParameterConfiguration p : h.parameters) {
-          if (p.name.equals("nodeName")) {
-            found = true;
-            p.value = this.nodeName;
-            break;
-          }
-        }
-
-        if (!found) {
-          h.parameters = OArrays.copyOf(h.parameters, h.parameters.length + 1);
-          h.parameters[h.parameters.length - 1] = new OServerParameterConfiguration("nodeName", this.nodeName);
-        }
-
-        try {
-          serverInstance.saveConfiguration();
-        } catch (IOException e) {
-          throw new OConfigurationException("Cannot save server configuration", e);
-        }
-        break;
-      }
-    }
-  }
-
   protected HazelcastInstance configureHazelcast() throws FileNotFoundException {
-    return Hazelcast.newHazelcastInstance(new FileSystemXmlConfig(hazelcastConfigFile));
+
+    // If hazelcastConfig is null, use the file system XML config.
+    if (hazelcastConfig == null) {
+      hazelcastConfig = new FileSystemXmlConfig(hazelcastConfigFile);
+      hazelcastConfig.setClassLoader(this.getClass().getClassLoader());
+    }
+
+    hazelcastConfig.getMapConfig(CONFIG_REGISTEREDNODES).setBackupCount(6);
+    hazelcastConfig.getMapConfig(OHazelcastDistributedMap.ORIENTDB_MAP).setMergePolicy(OHazelcastMergeStrategy.class.getName());
+
+    return Hazelcast.newHazelcastInstance(hazelcastConfig);
+  }
+
+  @Override
+  public String getPublicAddress() {
+    return hazelcastConfig.getNetworkConfig().getPublicAddress();
   }
 
   /**
    * Initializes all the available server's databases as distributed.
    */
-  protected void loadDistributedDatabases() {
-    for (Entry<String, String> storageEntry : serverInstance.getAvailableStorageNames().entrySet()) {
+  protected void loadLocalDatabases() {
+    for (Map.Entry<String, String> storageEntry : serverInstance.getAvailableStorageNames().entrySet()) {
       final String databaseName = storageEntry.getKey();
 
       if (messageService.getDatabase(databaseName) == null) {
-        ODistributedServerLog.warn(this, getLocalNodeName(), null, DIRECTION.NONE, "opening database '%s'...", databaseName);
+        ODistributedServerLog.info(this, nodeName, null, DIRECTION.NONE, "Opening database '%s'...", databaseName);
 
-        final ODistributedConfiguration cfg = getDatabaseConfiguration(databaseName);
+        // INIT THE STORAGE
+        final ODistributedStorage stg = getStorage(databaseName);
 
-        if (!getConfigurationMap().containsKey(CONFIG_DATABASE_PREFIX + databaseName)) {
-          // PUBLISH CFG FIRST TIME
-          getConfigurationMap().put(CONFIG_DATABASE_PREFIX + databaseName, cfg.serialize());
-        }
+        executeInDistributedDatabaseLock(databaseName, 20000, null, new OCallable<Object, OModifiableDistributedConfiguration>() {
+          @Override
+          public Object call(OModifiableDistributedConfiguration cfg) {
+            ODistributedServerLog.info(this, nodeName, null, DIRECTION.NONE, "Current node started as %s for database '%s'",
+                cfg.getServerRole(nodeName), databaseName);
 
-        final boolean hotAlignment = cfg.isHotAlignment();
+            final ODistributedDatabaseImpl ddb = messageService.registerDatabase(databaseName, cfg);
+            ddb.resume();
 
-        final OHazelcastDistributedDatabase db = messageService.registerDatabase(databaseName).configureDatabase(hotAlignment,
-            hotAlignment);
-      }
-    }
-  }
+            // 1ST NODE TO HAVE THE DATABASE
+            cfg.addNewNodeInServerList(nodeName);
 
-  protected void installNewDatabases(final boolean iStartup) {
-    if (activeNodes.size() <= 1)
-      // NO OTHER NODES WHERE ALIGN
-      return;
+            // COLLECT ALL THE CLUSTERS WITH REMOVED NODE AS OWNER
+            reassignClustersOwnership(nodeName, databaseName, cfg, true);
 
-    // LOCKING THIS RESOURCE PREVENT CONCURRENT INSTALL OF THE SAME DB
-    synchronized (installDatabaseLock) {
-      for (Entry<String, Object> entry : getConfigurationMap().entrySet()) {
-        if (entry.getKey().startsWith(CONFIG_DATABASE_PREFIX)) {
-          final String databaseName = entry.getKey().substring(CONFIG_DATABASE_PREFIX.length());
+            try {
+              ddb.getSyncConfiguration().setLastLSN(nodeName, ((OLocalPaginatedStorage) stg.getUnderlying()).getLSN(), false);
+            } catch (IOException e) {
+              ODistributedServerLog
+                  .error(this, nodeName, null, DIRECTION.NONE, "Error on saving distributed LSN for database '%s' (err=%s).",
+                      databaseName, e.getMessage());
+            }
 
-          final ODocument config = (ODocument) entry.getValue();
-          final Boolean autoDeploy = config.field("autoDeploy");
+            ddb.setOnline();
 
-          if (autoDeploy != null && autoDeploy) {
-            installDatabase(iStartup, databaseName, config);
+            return null;
           }
-        }
+        });
       }
-    }
-  }
-
-  protected long writeDatabaseChunk(final int iChunkId, final ODistributedDatabaseChunk chunk, final FileOutputStream out)
-      throws IOException {
-
-    ODistributedServerLog.warn(this, getLocalNodeName(), null, DIRECTION.NONE, "- writing chunk #%d offset=%d size=%s", iChunkId,
-        chunk.offset, OFileUtils.getSizeAsString(chunk.buffer.length));
-    out.write(chunk.buffer);
-
-    return chunk.buffer.length;
-  }
-
-  protected void installDatabaseOnLocalNode(final OHazelcastDistributedDatabase distrDatabase, final String databaseName,
-      final String dbPath, final String iNode, final String iDatabaseCompressedFile) {
-    ODistributedServerLog.warn(this, getLocalNodeName(), iNode, DIRECTION.IN, "installing database '%s' to: %s...", databaseName,
-        dbPath);
-
-    try {
-      File f = new File(iDatabaseCompressedFile);
-
-      new File(dbPath).mkdirs();
-      final ODatabaseDocumentTx db = new ODatabaseDocumentTx("plocal:" + dbPath);
-
-      final FileInputStream in = new FileInputStream(f);
-      try {
-        db.restore(in, null, null, this);
-      } finally {
-        in.close();
-      }
-
-      db.close();
-      Orient.instance().unregisterStorageByName(db.getURL().substring(db.getStorage().getType().length() + 1));
-
-      ODistributedServerLog.info(this, getLocalNodeName(), null, DIRECTION.NONE, "installed database '%s'", databaseName);
-
-    } catch (IOException e) {
-      ODistributedServerLog.warn(this, getLocalNodeName(), null, DIRECTION.IN, "error on copying database '%s' on local server", e,
-          databaseName);
     }
   }
 
   @Override
-  protected ODocument loadDatabaseConfiguration(final String iDatabaseName, final File file) {
-    // FIRST LOOK IN THE CLUSTER
-    if (hazelcastInstance != null) {
-      final ODocument cfg = (ODocument) getConfigurationMap().get(CONFIG_DATABASE_PREFIX + iDatabaseName);
-      if (cfg != null) {
-        ODistributedServerLog.info(this, getLocalNodeName(), null, DIRECTION.NONE,
-            "loaded database configuration from active cluster");
+  public OHazelcastDistributedMap getConfigurationMap() {
+    return configurationMap;
+  }
 
-        updateCachedDatabaseConfiguration(iDatabaseName, cfg, false, false);
-        return cfg;
-      }
+  @Override
+  public void memberAttributeChanged(final MemberAttributeEvent memberAttributeEvent) {
+  }
+
+  public boolean updateCachedDatabaseConfiguration(final String databaseName, final OModifiableDistributedConfiguration cfg,
+      final boolean iDeployToCluster) {
+    // VALIDATE THE CONFIGURATION FIRST
+    getDistributedStrategy().validateConfiguration(cfg);
+
+    boolean updated = super.updateCachedDatabaseConfiguration(databaseName, cfg);
+
+    if (!updated && !getConfigurationMap().containsKey(CONFIG_DATABASE_PREFIX + databaseName))
+      // FIRST TIME, FORCE PUBLISHING
+      updated = true;
+
+    final ODocument document = cfg.getDocument();
+
+    if (updated) {
+      if (iDeployToCluster) {
+        // WRITE TO THE MAP TO BE READ BY NEW SERVERS ON JOIN
+        ORecordInternal.setRecordSerializer(document, ODatabaseDocumentTx.getDefaultSerializer());
+        configurationMap.put(OHazelcastPlugin.CONFIG_DATABASE_PREFIX + databaseName, document);
+
+        // SEND A DISTRIBUTED MSG TO ALL THE SERVERS
+        final Set<String> servers = new HashSet<String>(getActiveServers());
+        servers.remove(nodeName);
+
+        if (!servers.isEmpty() && messageService.getDatabase(databaseName) != null) {
+          final ODistributedResponse dResponse = sendRequest(databaseName, null, servers,
+              new OUpdateDatabaseConfigurationTask(databaseName, document), getNextMessageIdCounter(),
+              ODistributedRequest.EXECUTION_MODE.NO_RESPONSE, null, null, null);
+        }
+
+      } else
+        configurationMap.putInLocalCache(OHazelcastPlugin.CONFIG_DATABASE_PREFIX + databaseName, document);
+
+      // SEND NEW CFG TO ALL THE CONNECTED CLIENTS
+      serverInstance.getClientConnectionManager().pushDistribCfg2Clients(getClusterConfiguration());
+
+      dumpServersStatus();
     }
 
-    // NO NODE IN CLUSTER, LOAD FROM FILE
-    return super.loadDatabaseConfiguration(iDatabaseName, file);
+    return updated;
+  }
+
+  @Override
+  public void entryAdded(final EntryEvent<String, Object> iEvent) {
+    if (hazelcastInstance == null || !hazelcastInstance.getLifecycleService().isRunning())
+      return;
+
+    try {
+      if (iEvent.getMember() == null)
+        // IGNORE IT
+        return;
+
+      final String eventNodeName = getNodeName(iEvent.getMember());
+      if ("?".equals(eventNodeName))
+        // MOM ALWAYS SAYS: DON'T ACCEPT CHANGES FROM STRANGERS NODES
+        return;
+
+      final String key = iEvent.getKey();
+      if (key.startsWith(CONFIG_NODE_PREFIX)) {
+        if (!iEvent.getMember().equals(hazelcastInstance.getCluster().getLocalMember())) {
+          final ODocument cfg = (ODocument) iEvent.getValue();
+          final String joinedNodeName = (String) cfg.field("name");
+
+          if (this.nodeName.equals(joinedNodeName)) {
+            ODistributedServerLog.error(this, joinedNodeName, eventNodeName, DIRECTION.IN,
+                "Found a new node (%s) with the same name as current: '" + joinedNodeName
+                    + "'. The node has been excluded. Change the name in its config/orientdb-dserver-config.xml file",
+                iEvent.getMember());
+
+            throw new ODistributedException(
+                "Found a new node (" + iEvent.getMember().toString() + ") with the same name as current: '" + joinedNodeName
+                    + "'. The node has been excluded. Change the name in its config/orientdb-dserver-config.xml file");
+          }
+
+          registerNode(iEvent.getMember(), joinedNodeName);
+        }
+
+      } else if (key.startsWith(CONFIG_DBSTATUS_PREFIX)) {
+        ODistributedServerLog.info(this, nodeName, eventNodeName, DIRECTION.IN, "Received new status %s=%s",
+            key.substring(CONFIG_DBSTATUS_PREFIX.length()), iEvent.getValue());
+
+        // REASSIGN HIS CLUSTER
+        final String dbNode = key.substring(CONFIG_DBSTATUS_PREFIX.length());
+        final String nodeName = dbNode.substring(0, dbNode.indexOf("."));
+        final String databaseName = dbNode.substring(dbNode.indexOf(".") + 1);
+
+        onDatabaseEvent(nodeName, databaseName, (DB_STATUS) iEvent.getValue());
+        invokeOnDatabaseStatusChange(nodeName, databaseName, (DB_STATUS) iEvent.getValue());
+
+        if (!iEvent.getMember().equals(hazelcastInstance.getCluster().getLocalMember()) && DB_STATUS.ONLINE
+            .equals(iEvent.getValue())) {
+          final DB_STATUS s = getDatabaseStatus(getLocalNodeName(), databaseName);
+          if (s == DB_STATUS.NOT_AVAILABLE) {
+            // INSTALL THE DATABASE
+            installDatabase(false, databaseName, false,
+                OGlobalConfiguration.DISTRIBUTED_BACKUP_TRY_INCREMENTAL_FIRST.getValueAsBoolean());
+          }
+        }
+      }
+    } catch (HazelcastInstanceNotActiveException e) {
+      OLogManager.instance().error(this, "Hazelcast is not running");
+    } catch (RetryableHazelcastException e) {
+      OLogManager.instance().error(this, "Hazelcast is not running");
+    }
+  }
+
+  @Override
+  public void entryUpdated(final EntryEvent<String, Object> iEvent) {
+    if (hazelcastInstance == null || !hazelcastInstance.getLifecycleService().isRunning())
+      return;
+
+    try {
+      final String key = iEvent.getKey();
+
+      final String eventNodeName = getNodeName(iEvent.getMember());
+      if ("?".equals(eventNodeName))
+        // MOM ALWAYS SAYS: DON'T ACCEPT CHANGES FROM STRANGERS NODES
+        return;
+
+      if (key.startsWith(CONFIG_NODE_PREFIX)) {
+        ODistributedServerLog
+            .debug(this, nodeName, eventNodeName, DIRECTION.NONE, "Updated node configuration id=%s name=%s", iEvent.getMember(),
+                eventNodeName);
+
+        final ODocument cfg = (ODocument) iEvent.getValue();
+
+        if (!activeNodes.containsKey((String) cfg.field("name")))
+          updateLastClusterChange();
+
+        activeNodes.put((String) cfg.field("name"), (Member) iEvent.getMember());
+        if (iEvent.getMember().getUuid() != null) {
+          activeNodesNamesByUuid.put(iEvent.getMember().getUuid(), (String) cfg.field("name"));
+          activeNodesUuidByName.put((String) cfg.field("name"), iEvent.getMember().getUuid());
+        }
+
+        dumpServersStatus();
+
+      } else if (key.startsWith(CONFIG_DBSTATUS_PREFIX)) {
+        ODistributedServerLog.info(this, nodeName, eventNodeName, DIRECTION.IN, "Received updated status %s=%s",
+            key.substring(CONFIG_DBSTATUS_PREFIX.length()), iEvent.getValue());
+
+        // CALL DATABASE EVENT
+        final String dbNode = key.substring(CONFIG_DBSTATUS_PREFIX.length());
+        final String nodeName = dbNode.substring(0, dbNode.indexOf("."));
+        final String databaseName = dbNode.substring(dbNode.indexOf(".") + 1);
+
+        onDatabaseEvent(nodeName, databaseName, (DB_STATUS) iEvent.getValue());
+        invokeOnDatabaseStatusChange(nodeName, databaseName, (DB_STATUS) iEvent.getValue());
+
+        if (!iEvent.getMember().equals(hazelcastInstance.getCluster().getLocalMember()) && DB_STATUS.ONLINE
+            .equals(iEvent.getValue())) {
+          final DB_STATUS s = getDatabaseStatus(getLocalNodeName(), databaseName);
+          if (s == DB_STATUS.NOT_AVAILABLE) {
+            // INSTALL THE DATABASE
+            installDatabase(false, databaseName, false,
+                OGlobalConfiguration.DISTRIBUTED_BACKUP_TRY_INCREMENTAL_FIRST.getValueAsBoolean());
+          }
+        }
+
+      } else if (key.startsWith(CONFIG_REGISTEREDNODES)) {
+        ODistributedServerLog.info(this, nodeName, eventNodeName, DIRECTION.IN, "Received updated about registered nodes");
+        reloadRegisteredNodes((String) iEvent.getValue());
+
+      } else if (key.startsWith(CONFIG_LOCKMANAGER)) {
+        getLockManagerRequester().setServer((String) iEvent.getValue());
+      }
+
+    } catch (HazelcastInstanceNotActiveException e) {
+      OLogManager.instance().error(this, "Hazelcast is not running");
+    } catch (RetryableHazelcastException e) {
+      OLogManager.instance().error(this, "Hazelcast is not running");
+    }
+
+  }
+
+  @Override
+  public void entryRemoved(final EntryEvent<String, Object> iEvent) {
+    if (hazelcastInstance == null || !hazelcastInstance.getLifecycleService().isRunning())
+      return;
+
+    try {
+      final String key = iEvent.getKey();
+
+      final String eventNodeName = getNodeName(iEvent.getMember());
+      if ("?".equals(eventNodeName))
+        // MOM ALWAYS SAYS: DON'T ACCEPT CHANGES FROM STRANGERS NODES
+        return;
+
+      if (key.startsWith(CONFIG_NODE_PREFIX)) {
+        if (eventNodeName != null) {
+          ODistributedServerLog
+              .debug(this, nodeName, null, DIRECTION.NONE, "Removed node configuration id=%s name=%s", iEvent.getMember(),
+                  eventNodeName);
+          activeNodes.remove(eventNodeName);
+          activeNodesNamesByUuid.remove(iEvent.getMember().getUuid());
+          activeNodesUuidByName.remove(eventNodeName);
+          closeRemoteServer(eventNodeName);
+        }
+
+        updateLastClusterChange();
+
+        dumpServersStatus();
+
+      } else if (key.startsWith(CONFIG_DATABASE_PREFIX)) {
+        final String dbName = key.substring(CONFIG_DATABASE_PREFIX.length());
+        final ODistributedStorage stg = storages.remove(dbName);
+        if (stg != null) {
+          stg.close(true, false);
+        }
+
+        updateLastClusterChange();
+
+      } else if (key.startsWith(CONFIG_DBSTATUS_PREFIX)) {
+        ODistributedServerLog.debug(this, nodeName, getNodeName(iEvent.getMember()), DIRECTION.IN, "Received removed status %s=%s",
+            key.substring(CONFIG_DBSTATUS_PREFIX.length()), iEvent.getValue());
+
+        // CALL DATABASE EVENT
+        final String dbNode = key.substring(CONFIG_DBSTATUS_PREFIX.length());
+        final String nodeName = dbNode.substring(0, dbNode.indexOf("."));
+        final String databaseName = dbNode.substring(dbNode.indexOf(".") + 1);
+
+        onDatabaseEvent(nodeName, databaseName, (DB_STATUS) iEvent.getValue());
+      }
+    } catch (HazelcastInstanceNotActiveException e) {
+      OLogManager.instance().error(this, "Hazelcast is not running");
+    } catch (RetryableHazelcastException e) {
+      OLogManager.instance().error(this, "Hazelcast is not running");
+    }
+
+  }
+
+  @Override
+  public void entryEvicted(final EntryEvent<String, Object> iEvent) {
+  }
+
+  @Override
+  public void mapEvicted(final MapEvent iEvent) {
+  }
+
+  @Override
+  public void mapCleared(final MapEvent event) {
   }
 
   /**
-   * Pauses the request if the distributed cluster need to be rebalanced because change of shape (add/remove nodes) or a node that
-   * is much slower than the average.
-   * 
-   * @param iDatabaseName
+   * Removes the node map entry.
    */
-  protected void checkForClusterRebalance(final String iDatabaseName) {
-    if (activeNodes.size() <= 1)
+  @Override
+  public void memberRemoved(final MembershipEvent iEvent) {
+    try {
+      updateLastClusterChange();
+
+      if (iEvent.getMember() == null)
+        return;
+
+      final String nodeLeftName = getNodeName(iEvent.getMember());
+      if (nodeLeftName == null)
+        return;
+
+      removeServer(nodeLeftName, true);
+
+    } catch (HazelcastInstanceNotActiveException e) {
+      OLogManager.instance().error(this, "Hazelcast is not running");
+    } catch (RetryableHazelcastException e) {
+      OLogManager.instance().error(this, "Hazelcast is not running");
+    } catch (Throwable e) {
+      OLogManager.instance()
+          .error(this, "Error on removing the server '%s' (err=%s)", getNodeName(iEvent.getMember()), e.getMessage());
+    }
+  }
+
+  @Override
+  public void memberAdded(final MembershipEvent iEvent) {
+    if (hazelcastInstance == null || !hazelcastInstance.getLifecycleService().isRunning())
       return;
 
-    if (getAvailableNodes(iDatabaseName) <= 1)
+    try {
+      updateLastClusterChange();
+      final String addedNodeName = getNodeName(iEvent.getMember());
+      ODistributedServerLog
+          .info(this, nodeName, null, DIRECTION.NONE, "Added new node id=%s name=%s", iEvent.getMember(), addedNodeName);
+
+      // REMOVE THE NODE FROM AUTO REMOVAL
+      autoRemovalOfServers.remove(addedNodeName);
+
+    } catch (HazelcastInstanceNotActiveException e) {
+      OLogManager.instance().error(this, "Hazelcast is not running");
+    } catch (RetryableHazelcastException e) {
+      OLogManager.instance().error(this, "Hazelcast is not running");
+    }
+  }
+
+  @Override
+  public void stateChanged(final LifecycleEvent event) {
+    final LifecycleEvent.LifecycleState state = event.getState();
+    if (state == LifecycleEvent.LifecycleState.MERGING)
+      setNodeStatus(NODE_STATUS.MERGING);
+    else if (state == LifecycleEvent.LifecycleState.MERGED) {
+      ODistributedServerLog.info(this, nodeName, null, DIRECTION.NONE, "Server merged the existent cluster, merging databases...");
+
+      getLockManagerRequester().setServer((String) configurationMap.getHazelcastMap().get(CONFIG_LOCKMANAGER));
+
+      configurationMap.clearLocalCache();
+
+      // TEMPORARY PATCH TO FIX HAZELCAST'S BEHAVIOUR THAT ENQUEUES THE MERGING ITEM EVENT WITH THIS AND ACTIVE NODES MAP COULD BE STILL NOT FILLED
+      new Thread(new Runnable() {
+        @Override
+        public void run() {
+          try {
+            // WAIT THE LOCK MANAGER IS ONLINE
+            while (!getActiveServers().contains(getLockManagerServer())) {
+              try {
+                Thread.sleep(1000);
+              } catch (InterruptedException e) {
+                // IGNORE IT
+              }
+            }
+
+            final String cs = getLockManagerServer();
+
+            ODistributedServerLog
+                .info(this, getLocalNodeName(), null, DIRECTION.NONE, "Merging networks, lockManager=%s (active=%s)...", cs,
+                    getActiveServers().contains(getLockManagerServer()));
+
+            for (final String databaseName : getMessageService().getDatabases()) {
+              executeInDistributedDatabaseLock(databaseName, 20000, null,
+                  new OCallable<Object, OModifiableDistributedConfiguration>() {
+                    @Override
+                    public Object call(final OModifiableDistributedConfiguration cfg) {
+                      for (Map.Entry<String, Member> entry : activeNodes.entrySet()) {
+                        final String server = entry.getKey();
+                        if (!cfg.getRegisteredServers().contains(server)) {
+                          if (getDatabaseStatus(server, databaseName) != DB_STATUS.OFFLINE)
+                            cfg.addNewNodeInServerList(server);
+                        }
+                      }
+                      return null;
+                    }
+                  });
+            }
+          } finally {
+            ODistributedServerLog
+                .warn(this, getLocalNodeName(), null, DIRECTION.NONE, "Network merged, lockManager=%s...", getLockManagerServer());
+            setNodeStatus(NODE_STATUS.ONLINE);
+          }
+        }
+      }).start();
+    }
+  }
+
+  @Override
+  public void onCreate(final ODatabaseInternal iDatabase) {
+    if (!isRelatedToLocalServer(iDatabase))
       return;
 
-    // TODO: SEPARATE METRICS PER DATABASE
-    final long averageResponseTime = messageService.getAverageResponseTime();
+    if (status != NODE_STATUS.ONLINE)
+      return;
 
-    // TODO: SELECT THE RIGHT TIMEOUT
-    final long timeout = OGlobalConfiguration.DISTRIBUTED_CRUD_TASK_SYNCH_TIMEOUT.getValueAsLong();
+    final ODatabaseDocumentInternal currDb = ODatabaseRecordThreadLocal.INSTANCE.getIfDefined();
+    try {
 
-    if (averageResponseTime > timeout * 75 / 100) {
-      long sleep = Math.abs(timeout - averageResponseTime);
-      if (sleep > 3000)
-        sleep = 3000;
+      final String dbName = iDatabase.getName();
 
-      ODistributedServerLog.debug(this, getLocalNodeName(), null, DIRECTION.NONE,
-          "slowing down request to avoid to fill queues. Wait for %dms (timeout=%d, averageResponseTime=%d)...", sleep, timeout,
-          averageResponseTime);
+      final ODocument dCfg = (ODocument) configurationMap.get(OHazelcastPlugin.CONFIG_DATABASE_PREFIX + dbName);
+      if (dCfg != null && getAvailableNodes(dbName) > 0) {
+        throw new ODistributedException(
+            "Cannot create the new database '" + dbName + "' because it is already present in distributed configuration");
+      }
+
+      // INIT THE STORAGE
+      getStorage(dbName);
+
+      final ODistributedConfiguration cfg = getDatabaseConfiguration(dbName);
+
+      final ODistributedDatabaseImpl distribDatabase = messageService.registerDatabase(dbName, cfg);
+      distribDatabase.checkNodeInConfiguration(cfg, getLocalNodeName());
+      distribDatabase.resume();
+      distribDatabase.setOnline();
+
+      // TODO: TEMPORARY PATCH TO WAIT FOR DB PROPAGATION IN CFG TO ALL THE OTHER SERVERS
       try {
-        Thread.sleep(sleep);
+        Thread.sleep(1000);
       } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new ODistributedException("Error on creating database '" + dbName + "' on distributed nodes");
+      }
+
+      // WAIT UNTIL THE DATABASE HAS BEEN PROPAGATED TO ALL THE SERVERS
+      final Set<String> servers = cfg.getAllConfiguredServers();
+      if (servers.size() > 1) {
+        int retry = 0;
+        for (; retry < 100; ++retry) {
+          boolean allServersAreOnline = true;
+          for (String server : servers) {
+            if (!isNodeOnline(server, dbName)) {
+              allServersAreOnline = false;
+              break;
+            }
+          }
+
+          if (allServersAreOnline)
+            break;
+
+          // WAIT FOR ANOTHER RETRY
+          try {
+            Thread.sleep(200);
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new ODistributedException("Error on creating database '" + dbName + "' on distributed nodes");
+          }
+        }
+
+        if (retry >= 100)
+          ODistributedServerLog
+              .warn(this, getLocalNodeName(), null, DIRECTION.NONE, "Timeout waiting for all nodes to be up for database %s",
+                  dbName);
+      }
+
+      onOpen(iDatabase);
+
+    } finally {
+      // RESTORE ORIGINAL DATABASE INSTANCE IN TL
+      ODatabaseRecordThreadLocal.INSTANCE.set(currDb);
+    }
+  }
+
+  @Override
+  public void onDrop(final ODatabaseInternal iDatabase) {
+    if (!isRelatedToLocalServer(iDatabase))
+      return;
+
+    final String dbName = iDatabase.getName();
+
+    ODistributedServerLog.info(this, getLocalNodeName(), null, DIRECTION.NONE, "Dropping database %s...", dbName);
+
+    if (!OScenarioThreadLocal.INSTANCE.isRunModeDistributed()) {
+      // DROP THE DATABASE ON ALL THE SERVERS
+      final ODistributedConfiguration dCfg = getDatabaseConfiguration(dbName);
+
+      final Set<String> servers = dCfg.getAllConfiguredServers();
+      servers.remove(nodeName);
+
+      final long start = System.currentTimeMillis();
+
+      // WAIT ALL THE SERVERS BECOME ONLINE
+      boolean allServersAreOnline = false;
+      while (!allServersAreOnline && System.currentTimeMillis() - start < 5000) {
+        allServersAreOnline = true;
+        for (String s : servers) {
+          final DB_STATUS st = getDatabaseStatus(s, dbName);
+          if (st == DB_STATUS.NOT_AVAILABLE || st == DB_STATUS.SYNCHRONIZING || st == DB_STATUS.BACKUP) {
+            allServersAreOnline = false;
+            try {
+              Thread.sleep(300);
+            } catch (InterruptedException e) {
+              Thread.currentThread().interrupt();
+              break;
+            }
+          }
+        }
+      }
+
+      if (!servers.isEmpty() && messageService.getDatabase(dbName) != null)
+        sendRequest(dbName, null, servers, new ODropDatabaseTask(), getNextMessageIdCounter(),
+            ODistributedRequest.EXECUTION_MODE.RESPONSE, null, null, null);
+    }
+
+    super.onDrop(iDatabase);
+
+    if (configurationMap != null) {
+      configurationMap.remove(OHazelcastPlugin.CONFIG_DBSTATUS_PREFIX + nodeName + "." + dbName);
+
+      if (!OScenarioThreadLocal.INSTANCE.isRunModeDistributed()) {
+        // LAST NODE HOLDING THE DATABASE, DELETE DISTRIBUTED CFG TOO
+        configurationMap.remove(OHazelcastPlugin.CONFIG_DATABASE_PREFIX + dbName);
+        configurationMap.remove(OAbstractSyncDatabaseTask.DEPLOYDB + dbName);
+        ODistributedServerLog.info(this, getLocalNodeName(), null, DIRECTION.NONE,
+            "Dropped last copy of database '%s', removing it from the cluster", dbName);
       }
     }
+  }
+
+  public ODocument getNodeConfigurationByUuid(final String iNodeId, final boolean useCache) {
+    if (configurationMap == null)
+      // NOT YET STARTED
+      return null;
+
+    final ODocument doc = (ODocument) (useCache ?
+        configurationMap.getLocalCachedValue(CONFIG_NODE_PREFIX + iNodeId) :
+        configurationMap.get(CONFIG_NODE_PREFIX + iNodeId));
+
+    if (doc == null)
+      ODistributedServerLog.debug(this, nodeName, null, DIRECTION.OUT, "Cannot find node with id '%s'", iNodeId);
+
+    return doc;
+  }
+
+  @Override
+  public DB_STATUS getDatabaseStatus(final String iNode, final String iDatabaseName) {
+    if (OSystemDatabase.SYSTEM_DB_NAME.equals(iDatabaseName)) {
+      // CHECK THE SERVER STATUS
+      return getActiveServers().contains(iNode) ?
+          ODistributedServerManager.DB_STATUS.ONLINE :
+          ODistributedServerManager.DB_STATUS.NOT_AVAILABLE;
+    }
+
+    final DB_STATUS status = (DB_STATUS) configurationMap
+        .getLocalCachedValue(OHazelcastPlugin.CONFIG_DBSTATUS_PREFIX + iNode + "." + iDatabaseName);
+    return status != null ? status : DB_STATUS.NOT_AVAILABLE;
+  }
+
+  public DB_STATUS getDatabaseStatus(final String iNode, final String iDatabaseName, final boolean useCache) {
+    if (OSystemDatabase.SYSTEM_DB_NAME.equals(iDatabaseName)) {
+      // CHECK THE SERVER STATUS
+      return getActiveServers().contains(iNode) ?
+          ODistributedServerManager.DB_STATUS.ONLINE :
+          ODistributedServerManager.DB_STATUS.NOT_AVAILABLE;
+    }
+
+    final String key = OHazelcastPlugin.CONFIG_DBSTATUS_PREFIX + iNode + "." + iDatabaseName;
+    final DB_STATUS status = (DB_STATUS) (useCache ? configurationMap.getLocalCachedValue(key) : configurationMap.get(key));
+    return status != null ? status : DB_STATUS.NOT_AVAILABLE;
+  }
+
+  @Override
+  public void setDatabaseStatus(final String iNode, final String iDatabaseName, final DB_STATUS iStatus) {
+    final String key = OHazelcastPlugin.CONFIG_DBSTATUS_PREFIX + iNode + "." + iDatabaseName;
+
+    final DB_STATUS currStatus = (DB_STATUS) configurationMap.get(key);
+
+    if (currStatus == null || currStatus != iStatus) {
+      configurationMap.put(key, iStatus);
+      invokeOnDatabaseStatusChange(iNode, iDatabaseName, iStatus);
+    }
+  }
+
+  private void invokeOnDatabaseStatusChange(final String iNode, final String iDatabaseName, final DB_STATUS iStatus) {
+    // NOTIFY DB/NODE IS CHANGING STATUS
+    for (ODistributedLifecycleListener l : listeners) {
+      try {
+        l.onDatabaseChangeStatus(iNode, iDatabaseName, iStatus);
+      } catch (Exception e) {
+        // IGNORE IT
+      }
+
+    }
+  }
+
+  protected void installNewDatabasesFromCluster() {
+    if (activeNodes.size() <= 1) {
+      // NO OTHER NODES WHERE ALIGN
+      return;
+    }
+
+    for (Map.Entry<String, Object> entry : configurationMap.entrySet()) {
+      if (entry.getKey().startsWith(CONFIG_DATABASE_PREFIX)) {
+        final String databaseName = entry.getKey().substring(CONFIG_DATABASE_PREFIX.length());
+
+        final Set<String> availableServers = getAvailableNodeNames(databaseName);
+        if (availableServers.isEmpty())
+          // NO NODE HAS THIS DATABASE AVAILABLE
+          continue;
+
+        final DB_STATUS currStatus = getDatabaseStatus(nodeName, databaseName);
+        if (currStatus == DB_STATUS.SYNCHRONIZING || currStatus == DB_STATUS.ONLINE || currStatus == DB_STATUS.BACKUP)
+          // FIX PREVIOUS STATUS OF DATABASE
+          setDatabaseStatus(nodeName, databaseName, DB_STATUS.NOT_AVAILABLE);
+
+        try {
+          installDatabase(true, databaseName, false,
+              OGlobalConfiguration.DISTRIBUTED_BACKUP_TRY_INCREMENTAL_FIRST.getValueAsBoolean());
+        } catch (Exception e) {
+          ODistributedServerLog
+              .error(this, getLocalNodeName(), null, DIRECTION.IN, "Error on installing database '%s' on local node (error=%s)",
+                  databaseName, e.toString());
+          setDatabaseStatus(getLocalNodeName(), databaseName, DB_STATUS.NOT_AVAILABLE);
+        }
+      }
+    }
+  }
+
+  public void reloadRegisteredNodes(String registeredNodesFromClusterAsJson) {
+    final ODocument registeredNodesFromCluster = new ODocument();
+
+    if (registeredNodesFromClusterAsJson == null)
+      // LOAD FROM THE CLUSTER CFG
+      registeredNodesFromClusterAsJson = (String) configurationMap.get(CONFIG_REGISTEREDNODES);
+
+    if (registeredNodesFromClusterAsJson != null) {
+      registeredNodesFromCluster.fromJSON(registeredNodesFromClusterAsJson);
+      registeredNodeById.clear();
+      registeredNodeById.addAll((Collection<? extends String>) registeredNodesFromCluster.field("ids", OType.EMBEDDEDLIST));
+
+      registeredNodeByName.clear();
+      registeredNodeByName
+          .putAll((Map<? extends String, ? extends Integer>) registeredNodesFromCluster.field("names", OType.EMBEDDEDMAP));
+    } else
+      throw new ODistributedException("Cannot find distributed 'registeredNodes' configuration");
+  }
+
+  private List<String> getRegisteredNodes() {
+    final List<String> registeredNodes = new ArrayList<String>();
+
+    for (Map.Entry entry : configurationMap.entrySet()) {
+      if (entry.getKey().toString().startsWith(CONFIG_NODE_PREFIX))
+        registeredNodes.add(entry.getKey().toString().substring(CONFIG_NODE_PREFIX.length()));
+    }
+
+    return registeredNodes;
+  }
+
+  public void removeNodeFromConfiguration(final String nodeLeftName, final boolean removeOnlyDynamicServers) {
+    ODistributedServerLog.info(this, getLocalNodeName(), null, DIRECTION.NONE,
+        "Removing server '%s' from all the databases (removeOnlyDynamicServers=%s)...", nodeLeftName, removeOnlyDynamicServers);
+
+    for (String dbName : getManagedDatabases()) {
+      removeNodeFromConfiguration(nodeLeftName, dbName, removeOnlyDynamicServers, false);
+    }
+  }
+
+  public boolean removeNodeFromConfiguration(final String nodeLeftName, final String databaseName,
+      final boolean removeOnlyDynamicServers, final boolean statusOffline) {
+    ODistributedServerLog.debug(this, getLocalNodeName(), null, DIRECTION.NONE,
+        "Removing server '%s' from database configuration '%s' (removeOnlyDynamicServers=%s)...", nodeLeftName, databaseName,
+        removeOnlyDynamicServers);
+
+    final OModifiableDistributedConfiguration cfg = getDatabaseConfiguration(databaseName).modify();
+
+    if (removeOnlyDynamicServers) {
+      // CHECK THE SERVER IS NOT REGISTERED STATICALLY
+      final String dc = cfg.getDataCenterOfServer(nodeLeftName);
+      if (dc != null) {
+        ODistributedServerLog.info(this, getLocalNodeName(), null, DIRECTION.NONE,
+            "Cannot remove server '%s' because it is enlisted in data center '%s' configuration for database '%s'", nodeLeftName,
+            dc, databaseName);
+        return false;
+      }
+
+      // CHECK THE SERVER IS NOT REGISTERED IN SERVERS
+      final Set<String> registeredServers = cfg.getRegisteredServers();
+      if (registeredServers.contains(nodeLeftName)) {
+        ODistributedServerLog.info(this, getLocalNodeName(), null, DIRECTION.NONE,
+            "Cannot remove server '%s' because it is enlisted in 'servers' of the distributed configuration for database '%s'",
+            nodeLeftName, databaseName);
+        return false;
+      }
+    }
+
+    final boolean found = executeInDistributedDatabaseLock(databaseName, 20000, cfg,
+        new OCallable<Boolean, OModifiableDistributedConfiguration>() {
+          @Override
+          public Boolean call(OModifiableDistributedConfiguration cfg) {
+            return cfg.removeServer(nodeLeftName) != null;
+          }
+        });
+
+    final DB_STATUS nodeLeftStatus = getDatabaseStatus(nodeLeftName, databaseName);
+    if (statusOffline && nodeLeftStatus != DB_STATUS.OFFLINE)
+      setDatabaseStatus(nodeLeftName, databaseName, DB_STATUS.OFFLINE);
+    else if (!statusOffline && nodeLeftStatus != DB_STATUS.NOT_AVAILABLE)
+      setDatabaseStatus(nodeLeftName, databaseName, DB_STATUS.NOT_AVAILABLE);
+
+    return found;
+  }
+
+  @Override
+  public void removeServer(final String nodeLeftName, final boolean removeOnlyDynamicServers) {
+    if (nodeLeftName == null)
+      return;
+
+    final Member member = activeNodes.remove(nodeLeftName);
+    if (member == null)
+      return;
+
+    ODistributedServerLog
+        .debug(this, nodeName, nodeLeftName, DIRECTION.NONE, "Distributed server '%s' is unreachable", nodeLeftName);
+
+    try {
+      // REMOVE INTRA SERVER CONNECTION
+      closeRemoteServer(nodeLeftName);
+
+      // NOTIFY ABOUT THE NODE HAS LEFT
+      for (ODistributedLifecycleListener l : listeners)
+        try {
+          l.onNodeLeft(nodeLeftName);
+        } catch (Exception e) {
+          // IGNORE IT
+        }
+
+      if (nodeLeftName.equals(getLockManagerRequester().getServer()))
+        electNewLockManager();
+
+      getLockManagerExecutor().handleUnreachableServer(nodeLeftName);
+      getLockManagerRequester().handleUnreachableServer(nodeLeftName);
+
+      // UNLOCK ANY PENDING LOCKS
+      if (messageService != null) {
+        for (String dbName : messageService.getDatabases())
+          messageService.getDatabase(dbName).handleUnreachableNode(nodeLeftName);
+      }
+
+      if (member.getUuid() != null)
+        activeNodesNamesByUuid.remove(member.getUuid());
+      activeNodesUuidByName.remove(nodeLeftName);
+
+      if (hazelcastInstance == null || !hazelcastInstance.getLifecycleService().isRunning())
+        return;
+
+      final long autoRemoveOffLineServer = OGlobalConfiguration.DISTRIBUTED_AUTO_REMOVE_OFFLINE_SERVERS.getValueAsLong();
+      if (autoRemoveOffLineServer == 0)
+        // REMOVE THE NODE RIGHT NOW
+        removeNodeFromConfiguration(nodeLeftName, removeOnlyDynamicServers);
+      else if (autoRemoveOffLineServer > 0) {
+        // SCHEDULE AUTO REMOVAL IN A WHILE
+        autoRemovalOfServers.put(nodeLeftName, System.currentTimeMillis());
+        Orient.instance().scheduleTask(new TimerTask() {
+          @Override
+          public void run() {
+            try {
+              final Long lastTimeNodeLeft = autoRemovalOfServers.get(nodeLeftName);
+              if (lastTimeNodeLeft == null)
+                // NODE WAS BACK ONLINE
+                return;
+
+              if (System.currentTimeMillis() - lastTimeNodeLeft >= autoRemoveOffLineServer) {
+                removeNodeFromConfiguration(nodeLeftName, removeOnlyDynamicServers);
+              }
+            } catch (Exception e) {
+              // IGNORE IT
+            }
+          }
+        }, autoRemoveOffLineServer, 0);
+      }
+
+      for (String databaseName : getManagedDatabases()) {
+        final DB_STATUS nodeLeftStatus = getDatabaseStatus(nodeLeftName, databaseName);
+        if (nodeLeftStatus != DB_STATUS.OFFLINE && nodeLeftStatus != DB_STATUS.NOT_AVAILABLE)
+          configurationMap.put(CONFIG_DBSTATUS_PREFIX + nodeLeftName + "." + databaseName, DB_STATUS.NOT_AVAILABLE);
+      }
+
+      ODistributedServerLog.warn(this, nodeName, null, DIRECTION.NONE, "Node removed id=%s name=%s", member, nodeLeftName);
+
+      if (nodeLeftName.startsWith("ext:")) {
+        final List<String> registeredNodes = getRegisteredNodes();
+
+        ODistributedServerLog.error(this, nodeName, null, DIRECTION.NONE,
+            "Removed node id=%s name=%s has not being recognized. Remove the node manually (registeredNodes=%s)", member,
+            nodeLeftName, registeredNodes);
+      }
+
+      for (String databaseName : getManagedDatabases()) {
+        try {
+          reassignClustersOwnership(nodeName, databaseName, null, false);
+        } catch (Exception e) {
+          // IGNORE IT
+          ODistributedServerLog.error(this, nodeName, null, DIRECTION.NONE,
+              "Cannot re-balance the cluster for database '%s' because the Lock Manager is not available (err=%s)", databaseName,
+              e.getMessage());
+        }
+      }
+
+      if (nodeLeftName.equalsIgnoreCase(nodeName))
+        // CURRENT NODE: EXIT
+        System.exit(1);
+
+    } finally {
+      // REMOVE NODE IN DB CFG
+      if (messageService != null)
+        messageService.handleUnreachableNode(nodeLeftName);
+    }
+  }
+
+  /**
+   * Elects a new server as Lock Manager. The election browse the ordered server list.
+   */
+  private void electNewLockManager() {
+    // TRY ALL THE SERVERS IN ORDER (ALL THE SERVERS HAVE THE SAME LIST)
+    final List<String> sortedServers = new ArrayList<String>(getActiveServers());
+    Collections.sort(sortedServers);
+
+    String lockManagerServer = getLockManagerRequester().getServer();
+    final String originalLockManager = lockManagerServer;
+
+    ODistributedServerLog.debug(this, nodeName, originalLockManager, DIRECTION.OUT,
+        "Lock Manager server '%s' is unreachable, electing a new Lock Manager...", originalLockManager);
+
+    int lockManagerServerId = -1;
+    if (registeredNodeByName.containsKey(lockManagerServer))
+      lockManagerServerId = registeredNodeByName.get(lockManagerServer);
+
+    int currIndex = lockManagerServerId;
+    for (int i = 0; i < registeredNodeById.size(); ++i) {
+      currIndex++;
+      if (currIndex >= registeredNodeById.size())
+        // RESTART FROM THE FIRST
+        currIndex = 0;
+
+      final String newServer = registeredNodeById.get(currIndex);
+      if (newServer.equalsIgnoreCase(getLocalNodeName()) || activeNodes.containsKey(newServer)) {
+        // TODO: IMPROVE ELECTION BY CHECKING AL THE NODES AGREE ON IT
+
+        ODistributedServerLog
+            .debug(this, nodeName, newServer, DIRECTION.OUT, "Trying to elected server '%s' as new Lock Manager (old=%s)...",
+                newServer, originalLockManager);
+
+        try {
+          getLockManagerRequester().setServer(newServer);
+
+          configurationMap.put(CONFIG_LOCKMANAGER, getLockManagerRequester().getServer());
+
+          ODistributedServerLog
+              .info(this, nodeName, newServer, DIRECTION.OUT, "Elected server '%s' as new Lock Manager (old=%s)", newServer,
+                  originalLockManager);
+
+          break;
+
+        } catch (Exception e) {
+          // NO SERVER RESPONDED, THE SERVER COULD BE ISOLATED, GO AHEAD WITH THE NEXT IN THE LIST
+          ODistributedServerLog
+              .info(this, nodeName, newServer, DIRECTION.OUT, "Error on electing server '%s' as new Lock Manager (error: %s)",
+                  newServer, e);
+        }
+      }
+    }
+
+  }
+
+  @Override
+  public Set<String> getActiveServers() {
+    return activeNodes.keySet();
+  }
+
+  @Override
+  public void onBeforeDatabaseOpen(final String url) {
+    final ODistributedDatabaseImpl dDatabase = getMessageService().getDatabase(OUtils.getDatabaseNameFromURL(url));
+    if (dDatabase != null)
+      dDatabase.waitForOnline();
+  }
+
+  protected void registerNode(final Member member, final String joinedNodeName) {
+    if (activeNodes.containsKey(joinedNodeName))
+      // ALREADY REGISTERED: SKIP IT
+      return;
+
+    if (joinedNodeName.startsWith("ext:"))
+      // NODE HAS NOT IS YET
+      return;
+
+    if (activeNodes.putIfAbsent(joinedNodeName, member) == null) {
+      // NOTIFY NODE IS GOING TO BE ADDED. IS EVERYBODY OK?
+      for (ODistributedLifecycleListener l : listeners) {
+        if (!l.onNodeJoining(joinedNodeName)) {
+          // DENY JOIN
+          ODistributedServerLog
+              .info(this, nodeName, getNodeName(member), DIRECTION.IN, "Denied node to join the cluster id=%s name=%s", member,
+                  getNodeName(member));
+
+          activeNodes.remove(joinedNodeName);
+          return;
+        }
+      }
+
+      activeNodesNamesByUuid.put(member.getUuid(), joinedNodeName);
+      activeNodesUuidByName.put(joinedNodeName, member.getUuid());
+
+      try {
+        getRemoteServer(joinedNodeName);
+      } catch (IOException e) {
+        ODistributedServerLog
+            .error(this, nodeName, joinedNodeName, DIRECTION.OUT, "Error on connecting to node %s", joinedNodeName);
+      }
+
+      ODistributedServerLog.info(this, nodeName, getNodeName(member), DIRECTION.IN,
+          "Added node configuration id=%s name=%s, now %d nodes are configured", member, getNodeName(member), activeNodes.size());
+
+      // NOTIFY NODE WAS ADDED SUCCESSFULLY
+      for (ODistributedLifecycleListener l : listeners)
+        l.onNodeJoined(joinedNodeName);
+
+      // FORCE THE ALIGNMENT FOR ALL THE ONLINE DATABASES AFTER THE JOIN ONLY IF AUTO-DEPLOY IS SET
+      for (String db : messageService.getDatabases())
+        if (getDatabaseConfiguration(db).isAutoDeploy() && getDatabaseStatus(joinedNodeName, db) == DB_STATUS.ONLINE)
+          setDatabaseStatus(joinedNodeName, db, DB_STATUS.NOT_AVAILABLE);
+
+      dumpServersStatus();
+    }
+  }
+
+  /**
+   * ASSIGN THE LOCK MANAGER AT STARTUP
+   */
+  private void assignLockManagerFromCluster() {
+    String lockManagerServer = null;
+    while (lockManagerServer == null) {
+      if (activeNodes.size() == 1) {
+        // ONLY CURRENT NODE ONLINE, SET IT AS INITIAL LOCK MANAGER
+        lockManagerServer = nodeName;
+        if (configurationMap.putIfAbsent(CONFIG_LOCKMANAGER, lockManagerServer) == null)
+          break;
+      } else {
+        lockManagerServer = (String) configurationMap.get(CONFIG_LOCKMANAGER);
+        if (lockManagerServer != null)
+          break;
+      }
+
+      try {
+        Thread.sleep(100);
+      } catch (InterruptedException e) {
+        break;
+      }
+    }
+
+    getLockManagerRequester().setServer(lockManagerServer);
+
+    OLogManager.instance().info(this, "Distributed Lock Manager server is '%s'", lockManagerServer);
   }
 }

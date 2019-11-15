@@ -1,22 +1,22 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.metadata.schema;
 
 import com.orientechnologies.orient.core.id.ORID;
@@ -29,86 +29,95 @@ import java.util.Set;
 
 public interface OSchema {
 
-  public int countClasses();
+  int countClasses();
 
-  public OClass createClass(final Class<?> iClass);
+  OClass createClass(Class<?> iClass);
 
-  public OClass createClass(final Class<?> iClass, final int iDefaultClusterId);
+  OClass createClass(String iClassName);
 
-  public OClass createClass(final String iClassName);
+  OClass createClass(String iClassName, OClass iSuperClass);
 
-  public OClass createClass(final String iClassName, final OClass iSuperClass);
+  OClass createClass(String className, int clusters, OClass... superClasses);
 
-  public OClass createClass(final String iClassName, final int iDefaultClusterId);
+  OClass createClass(String iClassName, OClass... superClasses);
 
-  public OClass createClass(final String iClassName, final OClass iSuperClass, final int iDefaultClusterId);
+  OClass createClass(String iClassName, OClass iSuperClass, int[] iClusterIds);
 
-  public OClass createClass(final String iClassName, final OClass iSuperClass, final int[] iClusterIds);
+  OClass createClass(String className, int[] clusterIds, OClass... superClasses);
 
-  public OClass createAbstractClass(final Class<?> iClass);
+  OClass createAbstractClass(Class<?> iClass);
 
-  public OClass createAbstractClass(final String iClassName);
+  OClass createAbstractClass(String iClassName);
 
-  public OClass createAbstractClass(final String iClassName, final OClass iSuperClass);
+  OClass createAbstractClass(String iClassName, OClass iSuperClass);
 
-  public void dropClass(final String iClassName);
+  OClass createAbstractClass(String iClassName, OClass... superClasses);
 
-  public <RET extends ODocumentWrapper> RET reload();
+  void dropClass(String iClassName);
 
-  public boolean existsClass(final String iClassName);
+  <RET extends ODocumentWrapper> RET reload();
 
-  public OClass getClass(final Class<?> iClass);
+  boolean existsClass(String iClassName);
+
+  OClass getClass(Class<?> iClass);
 
   /**
    * Returns the OClass instance by class name.
-   * 
+   * <p>
    * If the class is not configured and the database has an entity manager with the requested class as registered, then creates a
    * schema class for it at the fly.
-   * 
+   * <p>
    * If the database nor the entity manager have not registered class with specified name, returns null.
-   * 
-   * @param iClassName
-   *          Name of the class to retrieve
+   *
+   * @param iClassName Name of the class to retrieve
    * @return class instance or null if class with given name is not configured.
    */
-  public OClass getClass(final String iClassName);
+  OClass getClass(String iClassName);
 
-  public OClass getOrCreateClass(final String iClassName);
+  OClass getOrCreateClass(String iClassName);
 
-  public OClass getOrCreateClass(final String iClassName, final OClass iSuperClass);
+  OClass getOrCreateClass(String iClassName, OClass iSuperClass);
 
-  public Collection<OClass> getClasses();
+  OClass getOrCreateClass(String iClassName, OClass... superClasses);
 
-  public void create();
+  Collection<OClass> getClasses();
+
+  void create();
 
   @Deprecated
-  public int getVersion();
+  int getVersion();
 
-  public ORID getIdentity();
+  ORID getIdentity();
 
   /**
    * Do nothing. Starting from 1.0rc2 the schema is auto saved!
-   * 
+   *
    * @COMPATIBILITY 1.0rc1
    */
   @Deprecated
-  public <RET extends ODocumentWrapper> RET save();
+  <RET extends ODocumentWrapper> RET save();
 
   /**
    * Returns all the classes that rely on a cluster
-   * 
-   * @param iClusterName
-   *          Cluster name
+   *
+   * @param iClusterName Cluster name
    */
-  public Set<OClass> getClassesRelyOnCluster(String iClusterName);
+  Set<OClass> getClassesRelyOnCluster(String iClusterName);
 
-  public OClass getClassByClusterId(int clusterId);
+  OClass getClassByClusterId(int clusterId);
 
-  public OGlobalProperty getGlobalPropertyById(int id);
+  OGlobalProperty getGlobalPropertyById(int id);
 
-  public List<OGlobalProperty> getGlobalProperties();
-  
-  public OGlobalProperty createGlobalProperty(String name, OType type, Integer id);
+  List<OGlobalProperty> getGlobalProperties();
 
-  public OClusterSelectionFactory getClusterSelectionFactory();
+  OGlobalProperty createGlobalProperty(String name, OType type, Integer id);
+
+  OClusterSelectionFactory getClusterSelectionFactory();
+
+  OImmutableSchema makeSnapshot();
+
+  /**
+   * Callback invoked when the schema is loaded, after all the initializations.
+   */
+  void onPostIndexManagement();
 }

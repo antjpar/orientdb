@@ -1,15 +1,7 @@
 package com.orientechnologies.orient.server.network;
 
-import static org.testng.Assert.assertEquals;
-
-import java.io.File;
-import java.io.IOException;
-
-import org.testng.annotations.AfterClass;
-import org.testng.annotations.BeforeClass;
-import org.testng.annotations.Test;
-
 import com.orientechnologies.orient.client.remote.OServerAdmin;
+import com.orientechnologies.orient.core.Orient;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.exception.OConfigurationException;
 import com.orientechnologies.orient.core.record.impl.ODocument;
@@ -17,12 +9,20 @@ import com.orientechnologies.orient.core.serialization.serializer.record.ORecord
 import com.orientechnologies.orient.core.serialization.serializer.record.binary.ORecordSerializerBinary;
 import com.orientechnologies.orient.core.serialization.serializer.record.string.ORecordSerializerSchemaAware2CSV;
 import com.orientechnologies.orient.server.OServer;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.io.File;
+import java.io.IOException;
+
+import static org.junit.Assert.assertEquals;
 
 public class TestNetworkSerializerIndipendency {
-  private OServer             server;
   private static final String SERVER_DIRECTORY = "./target/db";
+  private OServer server;
 
-  @BeforeClass
+  @Before
   public void before() throws Exception {
     server = new OServer();
     server.setServerRootDirectory(SERVER_DIRECTORY);
@@ -51,8 +51,11 @@ public class TestNetworkSerializerIndipendency {
       assertEquals(doc.field("name"), document.field("name"));
       assertEquals(doc.field("surname"), document.field("surname"));
     } finally {
-      if (dbTx != null)
+      if (dbTx != null) {
         dbTx.close();
+        dbTx.getStorage().close();
+      }
+
       dropDatabase();
       ODatabaseDocumentTx.setDefaultSerializer(prev);
     }
@@ -91,19 +94,22 @@ public class TestNetworkSerializerIndipendency {
       assertEquals(doc.field("name"), document.field("name"));
       assertEquals(doc.field("surname"), document.field("surname"));
     } finally {
-      if (dbTx != null)
+      if (dbTx != null) {
         dbTx.close();
+        dbTx.getStorage().close();
+      }
 
       dropDatabase();
       ODatabaseDocumentTx.setDefaultSerializer(prev);
     }
   }
 
-  @AfterClass
+  @After
   public void after() {
     server.shutdown();
     File iDirectory = new File(SERVER_DIRECTORY);
     deleteDirectory(iDirectory);
+    Orient.instance().startup();
   }
 
   private void deleteDirectory(File iDirectory) {
@@ -112,7 +118,7 @@ public class TestNetworkSerializerIndipendency {
         if (f.isDirectory())
           deleteDirectory(f);
         else if (!f.delete())
-          throw new OConfigurationException("Can't delete the file: " + f);
+          throw new OConfigurationException("Cannot delete the file: " + f);
       }
   }
 }

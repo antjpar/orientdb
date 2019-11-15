@@ -20,24 +20,34 @@
 
 package com.orientechnologies.orient.core.storage.impl.local.paginated;
 
-import java.io.File;
-import java.io.IOException;
-import java.io.RandomAccessFile;
+import com.orientechnologies.common.log.OLogManager;
+import com.orientechnologies.orient.core.config.OGlobalConfiguration;
+import com.orientechnologies.orient.core.exception.OStorageException;
+
+import java.io.*;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * @author Andrey Lomakin <a href="mailto:lomakin.andrey@gmail.com">Andrey Lomakin</a>
+ * @author Andrey Lomakin (a.lomakin-at-orientechnologies.com)
  * @since 5/6/14
  */
 public class OPaginatedStorageDirtyFlag {
-  private final String     dirtyFilePath;
+  private final String dirtyFilePath;
 
   private File             dirtyFile;
   private RandomAccessFile dirtyFileData;
-  private volatile boolean dirtyFlag;
+  private FileChannel      channel;
+  private FileLock         fileLock;
 
-  private final Lock       lock = new ReentrantLock();
+  private volatile boolean dirtyFlag;
+  private volatile boolean indexRebuildScheduled;
+
+  private final Lock lock = new ReentrantLock();
 
   public OPaginatedStorageDirtyFlag(String dirtyFilePath) {
     this.dirtyFilePath = dirtyFilePath;
@@ -52,22 +62,38 @@ public class OPaginatedStorageDirtyFlag {
         final boolean fileDeleted = dirtyFile.delete();
 
         if (!fileDeleted)
-          throw new IllegalStateException("Can not delete file : " + dirtyFilePath);
+          throw new IllegalStateException("Cannot delete file : " + dirtyFilePath);
       }
 
       final boolean fileCreated = dirtyFile.createNewFile();
       if (!fileCreated)
-        throw new IllegalStateException("Can not create file : " + dirtyFilePath);
+        throw new IllegalStateException("Cannot create file : " + dirtyFilePath);
 
       dirtyFileData = new RandomAccessFile(dirtyFile, "rwd");
+      channel = dirtyFileData.getChannel();
 
-      dirtyFileData.seek(0);
-      dirtyFileData.writeBoolean(true);
+      if (OGlobalConfiguration.FILE_LOCK.getValueAsBoolean()) {
+        lockFile();
+      }
+
       dirtyFlag = true;
+      indexRebuildScheduled = false;
 
+      writeState(dirtyFlag, indexRebuildScheduled);
     } finally {
       lock.unlock();
     }
+  }
+
+  private void lockFile() throws IOException {
+    try {
+      fileLock = channel.tryLock();
+    } catch (OverlappingFileLockException e) {
+      OLogManager.instance().warn(this, "Database is open by another process");
+    }
+
+    if (fileLock == null)
+      throw new OStorageException("Can not open storage it is acquired by other process");
   }
 
   public boolean exists() {
@@ -83,13 +109,45 @@ public class OPaginatedStorageDirtyFlag {
     lock.lock();
     try {
       dirtyFile = new File(dirtyFilePath);
-      if (!dirtyFile.exists())
-        throw new IllegalStateException("File '" + dirtyFilePath + "' does not exist.");
+
+      if (!dirtyFile.exists()) {
+        final boolean fileCreated = dirtyFile.createNewFile();
+
+        if (!fileCreated)
+          throw new IllegalStateException("Cannot create file : " + dirtyFilePath);
+
+        dirtyFileData = new RandomAccessFile(dirtyFile, "rwd");
+        channel = dirtyFileData.getChannel();
+
+        writeState(false, false);
+      }
 
       dirtyFileData = new RandomAccessFile(dirtyFile, "rwd");
+      channel = dirtyFileData.getChannel();
 
-      dirtyFileData.seek(0);
-      dirtyFlag = dirtyFileData.readBoolean();
+      if (OGlobalConfiguration.FILE_LOCK.getValueAsBoolean()) {
+        lockFile();
+      }
+
+      channel.position(0);
+
+      if (channel.size() < 2) {
+        ByteBuffer buffer = ByteBuffer.allocate(1);
+        readByteBuffer(buffer, channel);
+
+        buffer.position(0);
+        dirtyFlag = buffer.get() > 0;
+        writeState(dirtyFlag, indexRebuildScheduled);
+      } else {
+        ByteBuffer buffer = ByteBuffer.allocate(2);
+        readByteBuffer(buffer, channel);
+
+        buffer.position(0);
+
+        dirtyFlag = buffer.get() > 0;
+        indexRebuildScheduled = buffer.get() > 0;
+      }
+
     } finally {
       lock.unlock();
     }
@@ -98,11 +156,18 @@ public class OPaginatedStorageDirtyFlag {
   public void close() throws IOException {
     lock.lock();
     try {
-      if (dirtyFile == null)
+      if (dirtyFile == null) {
         return;
+      }
 
-      if (dirtyFile.exists())
+      if (dirtyFile.exists()) {
+        if (fileLock != null) {
+          fileLock.release();
+          fileLock = null;
+        }
+
         dirtyFileData.close();
+      }
 
     } finally {
       lock.unlock();
@@ -117,6 +182,12 @@ public class OPaginatedStorageDirtyFlag {
 
       if (dirtyFile.exists()) {
 
+        if (fileLock != null) {
+          fileLock.release();
+          fileLock = null;
+        }
+
+        channel.close();
         dirtyFileData.close();
 
         boolean deleted = dirtyFile.delete();
@@ -138,9 +209,9 @@ public class OPaginatedStorageDirtyFlag {
       if (dirtyFlag)
         return;
 
-      dirtyFileData.seek(0);
-      dirtyFileData.writeBoolean(true);
       dirtyFlag = true;
+
+      writeState(dirtyFlag, indexRebuildScheduled);
     } finally {
       lock.unlock();
     }
@@ -155,9 +226,43 @@ public class OPaginatedStorageDirtyFlag {
       if (!dirtyFlag)
         return;
 
-      dirtyFileData.seek(0);
-      dirtyFileData.writeBoolean(false);
       dirtyFlag = false;
+
+      writeState(dirtyFlag, indexRebuildScheduled);
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  public void scheduleIndexRebuild() throws IOException {
+    if (indexRebuildScheduled)
+      return;
+
+    lock.lock();
+    try {
+      if (indexRebuildScheduled)
+        return;
+
+      indexRebuildScheduled = true;
+
+      writeState(dirtyFlag, indexRebuildScheduled);
+    } finally {
+      lock.unlock();
+    }
+  }
+
+  public void clearIndexRebuild() throws IOException {
+    if (!indexRebuildScheduled)
+      return;
+
+    lock.lock();
+    try {
+      if (!indexRebuildScheduled)
+        return;
+
+      indexRebuildScheduled = false;
+
+      writeState(dirtyFlag, indexRebuildScheduled);
     } finally {
       lock.unlock();
     }
@@ -165,6 +270,44 @@ public class OPaginatedStorageDirtyFlag {
 
   public boolean isDirty() {
     return dirtyFlag;
+  }
+
+  public boolean isIndexRebuildScheduled() {
+    return indexRebuildScheduled;
+  }
+
+  private void writeByteBuffer(ByteBuffer buffer, FileChannel channel) throws IOException {
+    int bytesToWrite = buffer.limit();
+
+    int written = 0;
+    while (written < bytesToWrite) {
+      written += channel.write(buffer, written);
+    }
+  }
+
+  private void readByteBuffer(ByteBuffer buffer, FileChannel channel) throws IOException {
+    int bytesToRead = buffer.limit();
+
+    int read = 0;
+    while (read < bytesToRead) {
+      int r = channel.read(buffer);
+
+      if (r == -1)
+        throw new EOFException("End of file is reached");
+
+      read += r;
+    }
+  }
+
+  private void writeState(boolean dirtyFlag, boolean indexRebuildScheduled) throws IOException {
+    ByteBuffer buffer = ByteBuffer.allocate(2);
+    buffer.put(dirtyFlag ? (byte) 1 : 0);
+    buffer.put(indexRebuildScheduled ? (byte) 1 : 0);
+
+    channel.position(0);
+    buffer.position(0);
+
+    writeByteBuffer(buffer, channel);
   }
 
 }

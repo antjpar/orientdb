@@ -19,6 +19,7 @@
   */
 package com.orientechnologies.orient.core.serialization.serializer.stream;
 
+import com.orientechnologies.common.exception.OException;
 import com.orientechnologies.orient.core.exception.OSerializationException;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.id.ORecordId;
@@ -48,7 +49,7 @@ public class OStreamSerializerAnyRecord implements OStreamSerializer {
       // NULL VALUE
       return null;
 
-    final String stream = OBinaryProtocol.bytes2string(iStream);
+    final String stream = new String(iStream,"UTF-8");
 
     Class<?> cls = null;
 
@@ -67,7 +68,8 @@ public class OStreamSerializerAnyRecord implements OStreamSerializer {
         }
       }
     } catch (Exception e) {
-      throw new OSerializationException("Error on unmarshalling content. Class " + (cls != null ? cls.getName() : "?"), e);
+      throw OException.wrapException(
+          new OSerializationException("Error on unmarshalling content. Class " + (cls != null ? cls.getName() : "?")), e);
     }
 
     throw new OSerializationException("Cannot unmarshall the record since the serialized object of class "
@@ -84,7 +86,7 @@ public class OStreamSerializerAnyRecord implements OStreamSerializer {
     final StringBuilder buffer = OStreamSerializerHelper.writeRecordType(iObject.getClass(), new StringBuilder(1024));
     buffer.append(((ORecord) iObject).getIdentity().toString());
 
-    return OBinaryProtocol.string2bytes(buffer.toString());
+    return buffer.toString().getBytes("UTF-8");
   }
 
   public String getName() {

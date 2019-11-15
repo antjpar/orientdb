@@ -19,12 +19,14 @@ import com.orientechnologies.orient.client.db.ODatabaseHelper;
 import com.orientechnologies.orient.client.remote.OEngineRemote;
 import com.orientechnologies.orient.core.Orient;
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
+import com.orientechnologies.orient.core.db.OPartitionedDatabasePool;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentPool;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
-import com.orientechnologies.orient.core.engine.memory.OEngineMemory;
 import com.orientechnologies.orient.core.exception.OStorageException;
+import com.orientechnologies.orient.core.exception.OStorageExistsException;
 import com.orientechnologies.orient.core.metadata.security.ORole;
+import com.orientechnologies.orient.core.metadata.security.OSecurityNull;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
 import com.orientechnologies.orient.object.db.OObjectDatabaseTx;
 import com.tinkerpop.blueprints.impls.orient.OrientGraphFactory;
@@ -32,50 +34,56 @@ import com.tinkerpop.blueprints.impls.orient.OrientGraphNoTx;
 import org.testng.Assert;
 import org.testng.annotations.*;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.Locale;
 
 @Test(groups = "db")
 public class DbCreationTest extends ObjectDBBaseTest {
 
+  private OPartitionedDatabasePool pool;
+
   @Parameters(value = "url")
   public DbCreationTest(@Optional String url) {
     super(url);
+    setAutoManageDatabase(false);
 
     Orient.instance().getProfiler().startRecording();
   }
 
-	@BeforeClass
-	@Override
-	public void beforeClass() throws Exception {
-	}
+  @BeforeClass
+  @Override
+  public void beforeClass() throws Exception {
+    pool = new OPartitionedDatabasePool(url, "admin", "admin");
+  }
 
-	@AfterClass
-	@Override
-	public void afterClass() throws Exception {
-	}
+  @AfterClass
+  @Override
+  public void afterClass() throws Exception {
+    pool.close();
+  }
 
-	@BeforeMethod
-	@Override
-	public void beforeMethod() throws Exception {
-	}
+  @BeforeMethod
+  @Override
+  public void beforeMethod() throws Exception {
+  }
 
-	@AfterMethod
-	@Override
-	public void afterMethod() throws Exception {
-	}
+  @AfterMethod
+  @Override
+  public void afterMethod() throws Exception {
+  }
 
-	public void testDbCreationNoSecurity() throws IOException {
+  public void testDbCreationNoSecurity() throws IOException {
     if (!url.startsWith(OEngineRemote.NAME)) {
       ODatabaseDocument db = new ODatabaseDocumentTx(url);
-      db.setProperty("security", Boolean.FALSE);
+      db.setProperty("security", OSecurityNull.class);
 
       ODatabaseHelper.dropDatabase(db, "server", getStorageType());
       ODatabaseHelper.createDatabase(db, url, getStorageType());
       ODatabaseHelper.dropDatabase(db, "server", getStorageType());
 
       database = new OObjectDatabaseTx(url);
-      database.setProperty("security", Boolean.FALSE);
+      database.setProperty("security", OSecurityNull.class);
 
       ODatabaseHelper.dropDatabase(database, "server", getStorageType());
       ODatabaseHelper.createDatabase(database, url, getStorageType());
@@ -188,16 +196,22 @@ public class DbCreationTest extends ObjectDBBaseTest {
     ODatabaseHelper.dropDatabase(db, getStorageType());
   }
 
-  @Test
+  @Test(dependsOnMethods = "testSubFolderDbCreateConnPool")
   public void testCreateAndConnectionPool() throws IOException {
     ODatabaseDocument db = new ODatabaseDocumentTx(url);
 
+    db.activateOnCurrentThread();
     ODatabaseHelper.dropDatabase(db, getStorageType());
 
     ODatabaseHelper.createDatabase(db, url, getStorageType());
-    db.close();
+
+    if (pool != null) {
+      pool.close();
+    }
+    pool = new OPartitionedDatabasePool(url, "admin", "admin");
+
     // Get connection from pool
-    db = ODatabaseDocumentPool.global().acquire(url, "admin", "admin");
+    db = pool.acquire();
     db.close();
 
     // Destroy db in the back of the pool
@@ -207,21 +221,22 @@ public class DbCreationTest extends ObjectDBBaseTest {
     // Re-create it so that the db exists for the pool
     db = new ODatabaseDocumentTx(url);
     ODatabaseHelper.createDatabase(db, url, getStorageType());
-    db.close();
-
-    ODatabaseDocumentPool.global().close();
   }
 
-  @Test
+  @Test(dependsOnMethods = { "testCreateAndConnectionPool" })
   public void testOpenCloseConnectionPool() throws IOException {
     ODatabaseDocumentTx db = new ODatabaseDocumentTx(url);
     if (!ODatabaseHelper.existsDatabase(db, null)) {
       ODatabaseHelper.createDatabase(db, url, getStorageType());
       db.close();
     }
+    if (pool != null) {
+      pool.close();
+    }
+    pool = new OPartitionedDatabasePool(url, "admin", "admin");
 
     for (int i = 0; i < 500; i++) {
-      ODatabaseDocumentPool.global().acquire(url, "admin", "admin").close();
+      pool.acquire().close();
     }
   }
 
@@ -255,6 +270,7 @@ public class DbCreationTest extends ObjectDBBaseTest {
       String ur = u + "/" + i + "$db";
       ODatabaseDocumentTx db = new ODatabaseDocumentTx(ur);
       Assert.assertTrue(ODatabaseHelper.existsDatabase(db, getStorageType()));
+      db.activateOnCurrentThread();
       ODatabaseHelper.dropDatabase(db, getStorageType());
       Assert.assertFalse(ODatabaseHelper.existsDatabase(db, getStorageType()));
     }
@@ -278,4 +294,51 @@ public class DbCreationTest extends ObjectDBBaseTest {
     OGlobalConfiguration.STORAGE_COMPRESSION_METHOD.setValue(OGlobalConfiguration.STORAGE_COMPRESSION_METHOD.getValue());
   }
 
+  public void testDbIsNotRemovedOnSecondTry() {
+    final String buildDirectory = new File(System.getProperty("buildDirectory", ".")).getAbsolutePath();
+    final String dbPath = buildDirectory + File.separator + this.getClass().getSimpleName() + "Remove";
+    final String dburl = "plocal:" + dbPath;
+
+    ODatabaseDocumentTx db = new ODatabaseDocumentTx(dburl);
+    db.create();
+    db.close();
+
+    Assert.assertTrue(new File(dbPath).exists());
+
+    final ODatabaseDocumentTx dbTwo = new ODatabaseDocumentTx(dburl);
+    try {
+      dbTwo.create();
+      Assert.fail();
+    } catch (OStorageExistsException e) {
+      //ignore all is correct
+    }
+
+    Assert.assertTrue(new File(dbPath).exists());
+
+    db = new ODatabaseDocumentTx(dburl);
+
+    db.open("admin", "admin");
+    db.drop();
+  }
+
+  public void testDbOutOfPath() throws IOException {
+    if (!url.startsWith("remote"))
+      return;
+
+    // TRY UNIX PATH
+    try {
+      ODatabaseDocumentTx db = new ODatabaseDocumentTx("remote:/db");
+      db.open("admin", "admin");
+      Assert.fail("Security breach: database with path /db was created");
+    } catch (Exception e) {
+    }
+
+    // TRY WINDOWS PATH
+    try {
+      ODatabaseDocumentTx db = new ODatabaseDocumentTx("remote:C:/db");
+      db.open("admin", "admin");
+      Assert.fail("Security breach: database with path c:/db was created");
+    } catch (Exception e) {
+    }
+  }
 }

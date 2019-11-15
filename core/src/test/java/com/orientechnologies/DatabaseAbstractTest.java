@@ -4,8 +4,10 @@ import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 
+import java.util.Locale;
+
 /**
- * @author Andrey Lomakin <a href="mailto:lomakin.andrey@gmail.com">Andrey Lomakin</a>
+ * @author Andrey Lomakin (a.lomakin-at-orientechnologies.com)
  * @since 7/16/14
  */
 public abstract class DatabaseAbstractTest {
@@ -36,7 +38,7 @@ public abstract class DatabaseAbstractTest {
   }
 
   public static ENV getEnvironment() {
-    String envName = System.getProperty("orientdb.test.env", "dev").toUpperCase();
+    String envName = System.getProperty("orientdb.test.env", "dev").toUpperCase(Locale.ENGLISH);
     ENV result = null;
     try {
       result = ENV.valueOf(envName);

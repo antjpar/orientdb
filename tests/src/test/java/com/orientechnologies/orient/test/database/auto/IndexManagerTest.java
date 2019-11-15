@@ -1,8 +1,6 @@
 package com.orientechnologies.orient.test.database.auto;
 
 import com.orientechnologies.common.listener.OProgressListener;
-import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
-import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.index.OCompositeIndexDefinition;
 import com.orientechnologies.orient.core.index.OIndex;
 import com.orientechnologies.orient.core.index.OIndexDefinition;
@@ -13,8 +11,11 @@ import com.orientechnologies.orient.core.index.OSimpleKeyIndexDefinition;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.metadata.schema.OSchema;
 import com.orientechnologies.orient.core.metadata.schema.OType;
-import com.orientechnologies.orient.enterprise.channel.binary.OResponseProcessingException;
-import org.testng.annotations.*;
+import com.orientechnologies.orient.core.sql.OCommandSQLParsingException;
+import org.testng.annotations.BeforeClass;
+import org.testng.annotations.Optional;
+import org.testng.annotations.Parameters;
+import org.testng.annotations.Test;
 
 import java.util.Arrays;
 import java.util.Collection;
@@ -60,17 +61,15 @@ public class IndexManagerTest extends DocumentDBBaseTest {
     final OIndexManagerProxy indexManager = database.getMetadata().getIndexManager();
 
     try {
-      indexManager.createIndex("simple:key", OClass.INDEX_TYPE.UNIQUE.toString(), new OSimpleKeyIndexDefinition(OType.INTEGER),
+      indexManager.createIndex("simple:key", OClass.INDEX_TYPE.UNIQUE.toString(), new OSimpleKeyIndexDefinition(-1, OType.INTEGER),
           null, null, null);
       fail();
     } catch (Exception e) {
-      if (e instanceof OResponseProcessingException)
-        e = (Exception) e.getCause();
+      Throwable cause = e;
+      while (cause.getCause() != null)
+        cause = cause.getCause();
 
-      if (e.getCause() != null)
-        e = (Exception) e.getCause();
-
-      assertTrue(e instanceof IllegalArgumentException);
+      assertTrue((cause instanceof IllegalArgumentException) || (cause instanceof OCommandSQLParsingException));
     }
   }
 
@@ -79,7 +78,7 @@ public class IndexManagerTest extends DocumentDBBaseTest {
     final OIndexManagerProxy indexManager = database.getMetadata().getIndexManager();
 
     final OIndex result = indexManager.createIndex("simplekey", OClass.INDEX_TYPE.UNIQUE.toString(), new OSimpleKeyIndexDefinition(
-        OType.INTEGER), null, null, null);
+        -1, OType.INTEGER), null, null, null);
 
     assertEquals(result.getName(), "simplekey");
 
@@ -123,10 +122,11 @@ public class IndexManagerTest extends DocumentDBBaseTest {
     final OIndex result = indexManager.createIndex(
         "compositeone",
         OClass.INDEX_TYPE.NOTUNIQUE.toString(),
-        new OCompositeIndexDefinition(CLASS_NAME, Arrays.asList(new OPropertyIndexDefinition(CLASS_NAME, "fOne", OType.INTEGER),
-            new OPropertyIndexDefinition(CLASS_NAME, "fTwo", OType.STRING)
+        new OCompositeIndexDefinition(CLASS_NAME, Arrays.asList(
+            new OPropertyIndexDefinition(CLASS_NAME, "fOne", OType.INTEGER), new OPropertyIndexDefinition(CLASS_NAME, "fTwo",
+                OType.STRING)
 
-        )), new int[] { database.getClusterIdByName(CLASS_NAME) }, null, null);
+        ), -1), new int[] { database.getClusterIdByName(CLASS_NAME) }, null, null);
 
     assertEquals(result.getName(), "compositeone");
 
@@ -159,11 +159,11 @@ public class IndexManagerTest extends DocumentDBBaseTest {
     final OIndex result = indexManager.createIndex(
         "compositetwo",
         OClass.INDEX_TYPE.NOTUNIQUE.toString(),
-        new OCompositeIndexDefinition(CLASS_NAME, Arrays.asList(new OPropertyIndexDefinition(CLASS_NAME, "fOne", OType.INTEGER),
-            new OPropertyIndexDefinition(CLASS_NAME, "fTwo", OType.STRING), new OPropertyIndexDefinition(CLASS_NAME, "fThree",
-                OType.BOOLEAN)
+        new OCompositeIndexDefinition(CLASS_NAME, Arrays.asList(
+            new OPropertyIndexDefinition(CLASS_NAME, "fOne", OType.INTEGER), new OPropertyIndexDefinition(CLASS_NAME, "fTwo",
+                OType.STRING), new OPropertyIndexDefinition(CLASS_NAME, "fThree", OType.BOOLEAN)
 
-        )), new int[] { database.getClusterIdByName(CLASS_NAME) }, progressListener, null);
+        ), -1), new int[] { database.getClusterIdByName(CLASS_NAME) }, progressListener, null);
 
     assertEquals(result.getName(), "compositetwo");
     assertEquals(atomicInteger.get(), 2);
@@ -472,6 +472,57 @@ public class IndexManagerTest extends DocumentDBBaseTest {
     assertEquals(result.size(), 0);
   }
 
+  @Test
+  public void testGetClassInvolvedIndexesWithNullValues() {
+    String className = "GetClassInvolvedIndexesWithNullValues";
+    final OIndexManager indexManager = database.getMetadata().getIndexManager();
+    final OSchema schema = database.getMetadata().getSchema();
+    final OClass oClass = schema.createClass(className);
+
+
+    oClass.createProperty("one", OType.STRING);
+    oClass.createProperty("two", OType.STRING);
+    oClass.createProperty("three", OType.STRING);
+
+    indexManager.createIndex(className+"_indexOne_notunique", OClass.INDEX_TYPE.NOTUNIQUE.toString(), new OPropertyIndexDefinition(className,
+        "one", OType.STRING), oClass.getClusterIds(), null, null);
+
+    indexManager.createIndex(
+        className+"_indexOneTwo_notunique",
+        OClass.INDEX_TYPE.NOTUNIQUE.toString(),
+        new OCompositeIndexDefinition(className, Arrays.asList(
+            new OPropertyIndexDefinition(className, "one", OType.STRING),
+            new OPropertyIndexDefinition(className, "two", OType.STRING)
+
+        ), -1), oClass.getClusterIds(), null, null);
+
+    indexManager.createIndex(
+        className+"_indexOneTwoThree_notunique",
+        OClass.INDEX_TYPE.NOTUNIQUE.toString(),
+        new OCompositeIndexDefinition(className, Arrays.asList(
+            new OPropertyIndexDefinition(className, "one", OType.STRING),
+            new OPropertyIndexDefinition(className, "two", OType.STRING),
+            new OPropertyIndexDefinition(className, "three", OType.STRING)
+
+        ), -1), oClass.getClusterIds(), null, null);
+
+
+    Set<OIndex<?>> result = indexManager.getClassInvolvedIndexes(className, Arrays.asList("one"));
+    assertEquals(result.size(), 3);
+
+    result = indexManager.getClassInvolvedIndexes(className, Arrays.asList("one", "two"));
+    assertEquals(result.size(), 2);
+
+    result = indexManager.getClassInvolvedIndexes(className, Arrays.asList("one", "two", "three"));
+    assertEquals(result.size(), 1);
+
+    result = indexManager.getClassInvolvedIndexes(className, Arrays.asList("two"));
+    assertEquals(result.size(), 0);
+
+    result = indexManager.getClassInvolvedIndexes(className, Arrays.asList("two", "one", "three"));
+    assertEquals(result.size(), 1);
+  }
+
   @Test(dependsOnMethods = { "createCompositeIndexTestWithListener", "createCompositeIndexTestWithoutListener",
       "testCreateOnePropertyIndexTest" })
   public void testGetClassIndexes() {
@@ -484,6 +535,7 @@ public class IndexManagerTest extends DocumentDBBaseTest {
 
     compositeIndexOne.addIndex(new OPropertyIndexDefinition(CLASS_NAME, "fOne", OType.INTEGER));
     compositeIndexOne.addIndex(new OPropertyIndexDefinition(CLASS_NAME, "fTwo", OType.STRING));
+    compositeIndexOne.setNullValuesIgnored(false);
     expectedIndexDefinitions.add(compositeIndexOne);
 
     final OCompositeIndexDefinition compositeIndexTwo = new OCompositeIndexDefinition(CLASS_NAME);
@@ -491,9 +543,11 @@ public class IndexManagerTest extends DocumentDBBaseTest {
     compositeIndexTwo.addIndex(new OPropertyIndexDefinition(CLASS_NAME, "fOne", OType.INTEGER));
     compositeIndexTwo.addIndex(new OPropertyIndexDefinition(CLASS_NAME, "fTwo", OType.STRING));
     compositeIndexTwo.addIndex(new OPropertyIndexDefinition(CLASS_NAME, "fThree", OType.BOOLEAN));
+    compositeIndexTwo.setNullValuesIgnored(false);
     expectedIndexDefinitions.add(compositeIndexTwo);
 
     final OPropertyIndexDefinition propertyIndex = new OPropertyIndexDefinition(CLASS_NAME, "fOne", OType.INTEGER);
+    propertyIndex.setNullValuesIgnored(false);
     expectedIndexDefinitions.add(propertyIndex);
 
     assertEquals(indexes.size(), 3);
@@ -516,6 +570,7 @@ public class IndexManagerTest extends DocumentDBBaseTest {
 
     compositeIndexOne.addIndex(new OPropertyIndexDefinition(CLASS_NAME, "fOne", OType.INTEGER));
     compositeIndexOne.addIndex(new OPropertyIndexDefinition(CLASS_NAME, "fTwo", OType.STRING));
+    compositeIndexOne.setNullValuesIgnored(false);
     expectedIndexDefinitions.add(compositeIndexOne);
 
     final OCompositeIndexDefinition compositeIndexTwo = new OCompositeIndexDefinition(CLASS_NAME);
@@ -523,9 +578,11 @@ public class IndexManagerTest extends DocumentDBBaseTest {
     compositeIndexTwo.addIndex(new OPropertyIndexDefinition(CLASS_NAME, "fOne", OType.INTEGER));
     compositeIndexTwo.addIndex(new OPropertyIndexDefinition(CLASS_NAME, "fTwo", OType.STRING));
     compositeIndexTwo.addIndex(new OPropertyIndexDefinition(CLASS_NAME, "fThree", OType.BOOLEAN));
+    compositeIndexTwo.setNullValuesIgnored(false);
     expectedIndexDefinitions.add(compositeIndexTwo);
 
     final OPropertyIndexDefinition propertyIndex = new OPropertyIndexDefinition(CLASS_NAME, "fOne", OType.INTEGER);
+    propertyIndex.setNullValuesIgnored(false);
     expectedIndexDefinitions.add(propertyIndex);
 
     assertEquals(indexes.size(), 3);
@@ -555,7 +612,7 @@ public class IndexManagerTest extends DocumentDBBaseTest {
   @Test
   public void testDropSimpleKey() {
     final OIndexManager indexManager = database.getMetadata().getIndexManager();
-    indexManager.createIndex("simplekeytwo", OClass.INDEX_TYPE.UNIQUE.toString(), new OSimpleKeyIndexDefinition(OType.INTEGER),
+    indexManager.createIndex("simplekeytwo", OClass.INDEX_TYPE.UNIQUE.toString(), new OSimpleKeyIndexDefinition(-1, OType.INTEGER),
         null, null, null);
 
     assertNotNull(indexManager.getIndex("simplekeytwo"));
@@ -586,8 +643,8 @@ public class IndexManagerTest extends DocumentDBBaseTest {
     final OIndexManager indexManager = database.getMetadata().getIndexManager();
 
     indexManager.createIndex("twoclassproperty", OClass.INDEX_TYPE.UNIQUE.toString(), new OPropertyIndexDefinition(
-        "indexManagerTestClassTwo", "fOne", OType.INTEGER), new int[] { database.getClusterIdByName("indexManagerTestClassTwo") },
-        null, null);
+            "indexManagerTestClassTwo", "fOne", OType.INTEGER),
+        new int[] { database.getClusterIdByName("indexManagerTestClassTwo") }, null, null);
 
     assertFalse(indexManager.getClassIndexes("indexManagerTestClassTwo").isEmpty());
 

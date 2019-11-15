@@ -1,58 +1,69 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.id;
-
-import java.io.IOException;
-import java.io.OutputStream;
 
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.serialization.OSerializableStream;
 
+import java.io.IOException;
+import java.io.OutputStream;
+
+/**
+ * RecordID interface that represents a recordid in database. RecordID are made of 2 numbers: cluster id (cluster number) and
+ * cluster position (absolute position inside the cluster). Loading a record by its RecordID allows O(1) performance, no matter the
+ * database size.
+ * 
+ * @author Luca Garulli
+ */
 public interface ORID extends OIdentifiable, OSerializableStream {
-  public static final char             PREFIX              = '#';
-  public static final char             SEPARATOR           = ':';
-  public static final int              CLUSTER_MAX         = 32767;
-  public static final int              CLUSTER_ID_INVALID  = -1;
-  public static final OClusterPosition CLUSTER_POS_INVALID = OClusterPosition.INVALID_POSITION;
+  char PREFIX              = '#';
+  char SEPARATOR           = ':';
+  int  CLUSTER_MAX         = 32767;
+  int  CLUSTER_ID_INVALID  = -1;
+  long CLUSTER_POS_INVALID = -1;
 
-  public int getClusterId();
+  int getClusterId();
 
-  public OClusterPosition getClusterPosition();
+  long getClusterPosition();
 
-  public void reset();
+  void reset();
 
-  public boolean isPersistent();
+  boolean isPersistent();
 
-  public boolean isValid();
+  boolean isValid();
 
-  public boolean isNew();
+  boolean isNew();
 
-  public boolean isTemporary();
+  boolean isTemporary();
 
-  public ORID copy();
+  ORID copy();
 
-  public String next();
+  String next();
 
-  public ORID nextRid();
+  /**
+   * Deprecated since v2.2
+   */
+  @Deprecated
+  ORID nextRid();
 
-  public int toStream(OutputStream iStream) throws IOException;
+  int toStream(OutputStream iStream) throws IOException;
 
-  public StringBuilder toString(StringBuilder iBuffer);
+  StringBuilder toString(StringBuilder iBuffer);
 }

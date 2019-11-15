@@ -2,6 +2,7 @@ package com.orientechnologies.orient.core.metadata.schema;
 
 import static org.testng.AssertJUnit.assertEquals;
 
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -29,7 +30,6 @@ import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.record.impl.ODocumentInternal;
 import com.orientechnologies.orient.core.serialization.ODocumentSerializable;
 import com.orientechnologies.orient.core.serialization.OSerializableStream;
-import com.orientechnologies.orient.core.type.tree.OMVRBTreeRIDSet;
 
 public class TestOTypeDetection {
 
@@ -60,6 +60,11 @@ public class TestOTypeDetection {
       // TODO Auto-generated method stub
 
     }
+
+  }
+
+  public class ClassSerializable implements Serializable {
+    private String aaa;
 
   }
 
@@ -136,8 +141,6 @@ public class TestOTypeDetection {
 
     assertEquals(OType.EMBEDDEDMAP, OType.getTypeByClass(OTrackedMap.class));
 
-    assertEquals(OType.LINKSET, OType.getTypeByClass(OMVRBTreeRIDSet.class));
-
     assertEquals(OType.LINKSET, OType.getTypeByClass(ORecordLazySet.class));
 
     assertEquals(OType.LINKLIST, OType.getTypeByClass(ORecordLazyList.class));
@@ -157,6 +160,8 @@ public class TestOTypeDetection {
     assertEquals(OType.EMBEDDED, OType.getTypeByClass(ODocumentSerializable.class));
 
     assertEquals(OType.EMBEDDED, OType.getTypeByClass(DocumentSer.class));
+
+    assertEquals(OType.CUSTOM, OType.getTypeByClass(ClassSerializable.class));
 
   }
 
@@ -216,6 +221,8 @@ public class TestOTypeDetection {
     assertEquals(OType.EMBEDDEDLIST, OType.getTypeByValue(new String[] {}));
 
     assertEquals(OType.EMBEDDED, OType.getTypeByValue(new DocumentSer()));
+
+    assertEquals(OType.CUSTOM, OType.getTypeByValue(new ClassSerializable()));
   }
 
   @Test

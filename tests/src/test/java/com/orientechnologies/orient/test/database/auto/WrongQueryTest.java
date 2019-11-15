@@ -15,6 +15,7 @@
  */
 package com.orientechnologies.orient.test.database.auto;
 
+import com.orientechnologies.orient.core.sql.OCommandSQLParsingException;
 import org.testng.Assert;
 import org.testng.annotations.Optional;
 import org.testng.annotations.Parameters;
@@ -39,9 +40,7 @@ public class WrongQueryTest extends DocumentDBBaseTest {
     try {
       database.command(new OSQLSynchQuery<ODocument>("select * from Account where name.not() like 'G%'")).execute();
       Assert.fail();
-    } catch (OResponseProcessingException e) {
-      Assert.assertTrue(e.getCause() instanceof OQueryParsingException);
-    } catch (OQueryParsingException e) {
+    } catch (OCommandSQLParsingException e) {
     }
   }
 }

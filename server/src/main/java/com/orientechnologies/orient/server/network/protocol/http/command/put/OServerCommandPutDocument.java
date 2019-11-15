@@ -1,25 +1,25 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.server.network.protocol.http.command.put;
 
-import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.record.ORecordInternal;
 import com.orientechnologies.orient.core.record.impl.ODocument;
@@ -38,7 +38,7 @@ public class OServerCommandPutDocument extends OServerCommandDocumentAbstract {
 
     iRequest.data.commandInfo = "Edit Document";
 
-    ODatabaseDocumentTx db = null;
+    ODatabaseDocument db = null;
     ORecordId recordId;
     final ODocument doc;
 
@@ -58,16 +58,14 @@ public class OServerCommandPutDocument extends OServerCommandDocumentAbstract {
 
       // UNMARSHALL DOCUMENT WITH REQUEST CONTENT
       doc = new ODocument();
-      doc.fromJSON(iRequest.content);
+      doc.fromJSON(iRequest.content).setTrackingChanges(false);
 
       if (iRequest.ifMatch != null)
         // USE THE IF-MATCH HTTP HEADER AS VERSION
-        doc.getRecordVersion().getSerializer().fromString(iRequest.ifMatch, doc.getRecordVersion());
+        ORecordInternal.setVersion(doc, Integer.parseInt(iRequest.ifMatch));
 
       if (!recordId.isValid())
         recordId = (ORecordId) doc.getIdentity();
-      else
-        ORecordInternal.setIdentity(doc, recordId);
 
       if (!recordId.isValid())
         throw new IllegalArgumentException("Invalid Record ID in request: " + recordId);
@@ -90,12 +88,16 @@ public class OServerCommandPutDocument extends OServerCommandDocumentAbstract {
         partialUpdateMode = true;
 
       currentDocument.merge(doc, partialUpdateMode, false);
-      currentDocument.getRecordVersion().copyFrom(doc.getRecordVersion());
+      if (currentDocument.isDirty()) {
+        if (doc.getVersion() > 0)
+          // OVERWRITE THE VERSION
+          ORecordInternal.setVersion(currentDocument, doc.getVersion());
 
-      currentDocument.save();
+        currentDocument.save();
+      }
 
-      iResponse.send(OHttpUtils.STATUS_OK_CODE, OHttpUtils.STATUS_OK_DESCRIPTION, OHttpUtils.CONTENT_TEXT_PLAIN,
-          currentDocument.toJSON(), OHttpUtils.HEADER_ETAG + doc.getVersion(), true);
+      iResponse.send(OHttpUtils.STATUS_OK_CODE, OHttpUtils.STATUS_OK_DESCRIPTION, OHttpUtils.CONTENT_JSON, currentDocument.toJSON(),
+          OHttpUtils.HEADER_ETAG + currentDocument.getVersion());
 
     } finally {
       if (db != null)

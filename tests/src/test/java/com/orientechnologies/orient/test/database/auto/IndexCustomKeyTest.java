@@ -15,7 +15,6 @@
  */
 package com.orientechnologies.orient.test.database.auto;
 
-import com.orientechnologies.common.directmemory.ODirectMemoryPointer;
 import com.orientechnologies.common.serialization.types.OBinarySerializer;
 import com.orientechnologies.common.serialization.types.OBinaryTypeSerializer;
 import com.orientechnologies.orient.core.exception.OSerializationException;
@@ -24,6 +23,7 @@ import com.orientechnologies.orient.core.index.ORuntimeKeyIndexDefinition;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.serialization.OSerializableStream;
 import com.orientechnologies.orient.core.serialization.serializer.binary.OBinarySerializerFactory;
+import com.orientechnologies.orient.core.storage.impl.local.paginated.wal.OWALChanges;
 import com.orientechnologies.orient.core.tx.OTransaction;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
@@ -32,6 +32,7 @@ import org.testng.annotations.Optional;
 import org.testng.annotations.Parameters;
 import org.testng.annotations.Test;
 
+import java.nio.ByteBuffer;
 import java.util.Arrays;
 
 @Test(groups = { "index" })
@@ -134,22 +135,6 @@ public class IndexCustomKeyTest extends DocumentDBBaseTest {
     }
 
     @Override
-    public void serializeInDirectMemoryObject(ComparableBinary object, ODirectMemoryPointer pointer, long offset, Object... hints) {
-      final byte[] buffer = object.toByteArray();
-      pointer.set(offset, buffer, 0, buffer.length);
-    }
-
-    @Override
-    public ComparableBinary deserializeFromDirectMemoryObject(ODirectMemoryPointer pointer, long offset) {
-      return new ComparableBinary(pointer.get(offset, LENGTH));
-    }
-
-    @Override
-    public int getObjectSizeInDirectMemory(ODirectMemoryPointer pointer, long offset) {
-      return LENGTH;
-    }
-
-    @Override
     public boolean isFixedLength() {
       return true;
     }
@@ -162,6 +147,34 @@ public class IndexCustomKeyTest extends DocumentDBBaseTest {
     @Override
     public ComparableBinary preprocess(ComparableBinary value, Object... hints) {
       return value;
+    }
+
+    @Override
+    public void serializeInByteBufferObject(ComparableBinary object, ByteBuffer buffer, Object... hints) {
+      final byte[] array = object.toByteArray();
+      buffer.put(array);
+    }
+
+    @Override
+    public ComparableBinary deserializeFromByteBufferObject(ByteBuffer buffer) {
+      final byte[] array = new byte[LENGTH];
+      buffer.get(array);
+      return new ComparableBinary(array);
+    }
+
+    @Override
+    public int getObjectSizeInByteBuffer(ByteBuffer buffer) {
+      return LENGTH;
+    }
+
+    @Override
+    public ComparableBinary deserializeFromByteBufferObject(ByteBuffer buffer, OWALChanges walChanges, int offset) {
+      return new ComparableBinary(walChanges.getBinaryValue(buffer, offset, LENGTH));
+    }
+
+    @Override
+    public int getObjectSizeInByteBuffer(ByteBuffer buffer, OWALChanges walChanges, int offset) {
+      return LENGTH;
     }
   }
 
@@ -176,7 +189,7 @@ public class IndexCustomKeyTest extends DocumentDBBaseTest {
       database.open("admin", "admin");
 
     database.getMetadata().getIndexManager().dropIndex("custom-hash");
-		database.close();
+    database.close();
 
     super.afterClass();
   }
@@ -191,7 +204,7 @@ public class IndexCustomKeyTest extends DocumentDBBaseTest {
       OBinarySerializerFactory.getInstance().registerSerializer(new OHash256Serializer(), null);
 
       database.getMetadata().getIndexManager()
-          .createIndex("custom-hash", "UNIQUE", new ORuntimeKeyIndexDefinition(OHash256Serializer.ID), null, null, null);
+          .createIndex("custom-hash", "UNIQUE", new ORuntimeKeyIndexDefinition(OHash256Serializer.ID, -1), null, null, null);
     }
   }
 

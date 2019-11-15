@@ -1,47 +1,46 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.record;
 
-import java.io.Serializable;
-
-import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.db.record.ORecordElement;
 import com.orientechnologies.orient.core.exception.ORecordNotFoundException;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.serialization.OSerializableStream;
 import com.orientechnologies.orient.core.tx.OTransactionOptimistic;
-import com.orientechnologies.orient.core.version.ORecordVersion;
+
+import java.io.Serializable;
 
 /**
  * Generic record representation. The object can be reused across multiple calls to the database by using the {@link #reset()}
  * method.
  */
-public interface ORecord extends ORecordElement, OIdentifiable, Serializable ,OSerializableStream {
+public interface ORecord extends ORecordElement, OIdentifiable, Serializable, OSerializableStream {
   /**
    * Removes all the dependencies with other records. All the relationships remain in form of RecordID. If some links contain dirty
    * records, the detach cannot be complete and this method returns false.
    * 
    * @return True if the document has been successfully detached, otherwise false.
    */
-  public boolean detach();
+  boolean detach();
 
   /**
    * Resets the record to be reused. The record is fresh like just created. Use this method to recycle records avoiding the creation
@@ -49,7 +48,7 @@ public interface ORecord extends ORecordElement, OIdentifiable, Serializable ,OS
    * 
    * @return The Object instance itself giving a "fluent interface". Useful to call multiple methods in chain.
    */
-  public <RET extends ORecord> RET reset();
+  <RET extends ORecord> RET reset();
 
   /**
    * Unloads current record. All information are lost but the record identity. At the next access the record will be auto-reloaded.
@@ -57,59 +56,50 @@ public interface ORecord extends ORecordElement, OIdentifiable, Serializable ,OS
    * 
    * @return The Object instance itself giving a "fluent interface". Useful to call multiple methods in chain.
    */
-  public <RET extends ORecord> RET unload();
+  <RET extends ORecord> RET unload();
 
   /**
    * All the fields are deleted but the record identity is maintained. Use this to remove all the document's fields.
    * 
    * @return The Object instance itself giving a "fluent interface". Useful to call multiple methods in chain.
    */
-  public <RET extends ORecord> RET clear();
+  <RET extends ORecord> RET clear();
 
   /**
    * Creates a copy of the record. All the record contents are copied.
    * 
    * @return The Object instance itself giving a "fluent interface". Useful to call multiple methods in chain.
    */
-  public <RET extends ORecord> RET copy();
+  <RET extends ORecord> RET copy();
 
   /**
    * Returns the record identity as &lt;cluster-id&gt;:&lt;cluster-position&gt;
    */
-  public ORID getIdentity();
+  ORID getIdentity();
 
   /**
    * Returns the current version number of the record. When the record is created has version = 0. At every change the storage
    * increment the version number. Version number is used by Optimistic transactions to check if the record is changed in the
-   * meanwhile of the transaction. In distributed environment you should prefer {@link #getRecordVersion()} instead of this method.
+   * meanwhile of the transaction.
    * 
    * @see OTransactionOptimistic
    * @return The version number. 0 if it's a brand new record.
    */
-  public int getVersion();
-
-  /**
-   * The same as {@link #getVersion()} but returns {@link ORecordVersion} interface that can contain additional information about
-   * current version. In distributed environment you should prefer this method instead of {@link #getVersion()}.
-   * 
-   * @return version of record
-   * @see ORecordVersion
-   */
-  public ORecordVersion getRecordVersion();
+  int getVersion();
 
   /**
    * Returns the database where the record belongs.
    * 
    * @return
    */
-  public ODatabaseRecord getDatabase();
+  ODatabaseDocument getDatabase();
 
   /**
    * Checks if the record is dirty, namely if it was changed in memory.
    * 
    * @return True if dirty, otherwise false
    */
-  public boolean isDirty();
+  boolean isDirty();
 
   /**
    * Loads the record content in memory. If the record is in cache will be returned a new instance, so pay attention to use the
@@ -118,7 +108,7 @@ public interface ORecord extends ORecordElement, OIdentifiable, Serializable ,OS
    * 
    * @return The record loaded or itself if the record has been reloaded from the storage. Useful to call methods in chain.
    */
-  public <RET extends ORecord> RET load() throws ORecordNotFoundException;
+  <RET extends ORecord> RET load() throws ORecordNotFoundException;
 
   /**
    * Loads the record content in memory. No cache is used. If the record is dirty, then it returns to the original content. If the
@@ -126,7 +116,10 @@ public interface ORecord extends ORecordElement, OIdentifiable, Serializable ,OS
    * 
    * @return The Object instance itself giving a "fluent interface". Useful to call multiple methods in chain.
    */
-  public <RET extends ORecord> RET reload() throws ORecordNotFoundException;
+  <RET extends ORecord> RET reload() throws ORecordNotFoundException;
+
+  <RET extends ORecord> RET reload(final String fetchPlan, final boolean ignoreCache, boolean force)
+      throws ORecordNotFoundException;
 
   /**
    * Saves in-memory changes to the database. Behavior depends by the current running transaction if any. If no transaction is
@@ -137,7 +130,7 @@ public interface ORecord extends ORecordElement, OIdentifiable, Serializable ,OS
    * 
    * @return The Object instance itself giving a "fluent interface". Useful to call multiple methods in chain.
    */
-  public <RET extends ORecord> RET save();
+  <RET extends ORecord> RET save();
 
   /**
    * Saves in-memory changes to the database defining a specific cluster where to save it. Behavior depends by the current running
@@ -148,11 +141,11 @@ public interface ORecord extends ORecordElement, OIdentifiable, Serializable ,OS
    * 
    * @return The Object instance itself giving a "fluent interface". Useful to call multiple methods in chain.
    */
-  public <RET extends ORecord> RET save(String iCluster);
+  <RET extends ORecord> RET save(String iCluster);
 
-  public <RET extends ORecord> RET save(boolean forceCreate);
+  <RET extends ORecord> RET save(boolean forceCreate);
 
-  public <RET extends ORecord> RET save(String iCluster, boolean forceCreate);
+  <RET extends ORecord> RET save(String iCluster, boolean forceCreate);
 
   /**
    * Deletes the record from the database. Behavior depends by the current running transaction if any. If no transaction is running
@@ -163,7 +156,7 @@ public interface ORecord extends ORecordElement, OIdentifiable, Serializable ,OS
    * 
    * @return The Object instance itself giving a "fluent interface". Useful to call multiple methods in chain.
    */
-  public <RET extends ORecord> RET delete();
+  <RET extends ORecord> RET delete();
 
   /**
    * Fills the record parsing the content in JSON format.
@@ -172,14 +165,14 @@ public interface ORecord extends ORecordElement, OIdentifiable, Serializable ,OS
    *          Object content in JSON format
    * @return The Object instance itself giving a "fluent interface". Useful to call multiple methods in chain.
    */
-  public <RET extends ORecord> RET fromJSON(String iJson);
+  <RET extends ORecord> RET fromJSON(String iJson);
 
   /**
    * Exports the record in JSON format.
    * 
    * @return Object content in JSON format
    */
-  public String toJSON();
+  String toJSON();
 
   /**
    * Exports the record in JSON format specifying additional formatting settings.
@@ -197,30 +190,12 @@ public interface ORecord extends ORecordElement, OIdentifiable, Serializable ,OS
    *          using an indenting level equals of 6.
    * @return Object content in JSON format
    */
-  public String toJSON(String iFormat);
+  String toJSON(String iFormat);
 
   /**
    * Returns the size in bytes of the record. The size can be computed only for not new records.
    * 
    * @return the size in bytes
    */
-  public int getSize();
-
-  /**
-   * Adds identity change listener, which is called when record identity is changed. Identity is changed if new record is saved or
-   * if transaction is committed and new record created inside of transaction.
-   * 
-   * @param identityChangeListener
-   *          Listener instance.
-   */
-  public void addIdentityChangeListener(OIdentityChangeListener identityChangeListener);
-
-  /**
-   * Removes identity change listener, which is called when record identity is changed. Identity is changed if new record is saved
-   * or if transaction is committed and new record created inside of transaction.
-   * 
-   * @param identityChangeListener
-   *          Listener instance.
-   */
-  public void removeIdentityChangeListener(OIdentityChangeListener identityChangeListener);
+  int getSize();
 }

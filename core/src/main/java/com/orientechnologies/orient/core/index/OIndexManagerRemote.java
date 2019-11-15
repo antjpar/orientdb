@@ -1,43 +1,45 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.index;
-
-import java.util.Collection;
-import java.util.Set;
 
 import com.orientechnologies.common.listener.OProgressListener;
 import com.orientechnologies.common.log.OLogManager;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
-import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.id.ORID;
+import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.id.ORecordId;
-import com.orientechnologies.orient.core.metadata.schema.OType;
 import com.orientechnologies.orient.core.record.ORecordInternal;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.sql.OCommandExecutorSQLCreateIndex;
 import com.orientechnologies.orient.core.sql.OCommandSQL;
 
-public class OIndexManagerRemote extends OIndexManagerAbstract {
-  private static final String QUERY_DROP = "drop index %s";
+import java.util.Collection;
+import java.util.Locale;
+import java.util.Set;
 
-  public OIndexManagerRemote(final ODatabaseRecord iDatabase) {
+public class OIndexManagerRemote extends OIndexManagerAbstract {
+  private static final String QUERY_DROP       = "drop index %s";
+  private static final long   serialVersionUID = -6570577338095096235L;
+
+  public OIndexManagerRemote(final ODatabaseDocument iDatabase) {
     super(iDatabase);
   }
 
@@ -46,12 +48,9 @@ public class OIndexManagerRemote extends OIndexManagerAbstract {
 
     String createIndexDDL;
     if (iIndexDefinition != null)
-      createIndexDDL = iIndexDefinition.toCreateIndexDDL(iName, iType);
+      createIndexDDL = iIndexDefinition.toCreateIndexDDL(iName, iType, engine);
     else
-      createIndexDDL = new OSimpleKeyIndexDefinition().toCreateIndexDDL(iName, iType);
-
-    if (engine != null)
-      createIndexDDL += " " + OCommandExecutorSQLCreateIndex.KEYWORD_ENGINE + " " + engine;
+      createIndexDDL = new OSimpleKeyIndexDefinition().toCreateIndexDDL(iName, iType, engine);
 
     if (metadata != null)
       createIndexDDL += " " + OCommandExecutorSQLCreateIndex.KEYWORD_METADATA + " " + metadata.toJSON();
@@ -63,14 +62,16 @@ public class OIndexManagerRemote extends OIndexManagerAbstract {
 
       getDatabase().command(new OCommandSQL(createIndexDDL)).execute();
 
-      ORecordInternal.setIdentity(document, new ORecordId(
-          ODatabaseRecordThreadLocal.INSTANCE.get().getStorage().getConfiguration().indexMgrRecordId));
+      ORecordInternal.setIdentity(document,
+          new ORecordId(ODatabaseRecordThreadLocal.INSTANCE.get().getStorage().getConfiguration().indexMgrRecordId));
 
       if (progressListener != null)
         progressListener.onCompletition(this, true);
 
       reload();
-      return preProcessBeforeReturn(indexes.get(iName.toLowerCase()));
+
+      final Locale locale = getServerLocale();
+      return preProcessBeforeReturn(indexes.get(iName.toLowerCase(locale)));
     } finally {
       releaseExclusiveLock();
     }
@@ -89,7 +90,8 @@ public class OIndexManagerRemote extends OIndexManagerAbstract {
       getDatabase().command(new OCommandSQL(text)).execute();
 
       // REMOVE THE INDEX LOCALLY
-      indexes.remove(iIndexName.toLowerCase());
+      final Locale locale = getServerLocale();
+      indexes.remove(iIndexName.toLowerCase(locale));
       reload();
 
       return this;
@@ -121,12 +123,12 @@ public class OIndexManagerRemote extends OIndexManagerAbstract {
   public void removeClassPropertyIndex(OIndex<?> idx) {
   }
 
-  protected OIndex<?> getRemoteIndexInstance(boolean isMultiValueIndex, String type, String name, Set<String> clustersToIndex,
-      OIndexDefinition indexDefinition, ORID identity, ODocument configuration) {
+  protected OIndex<?> getRemoteIndexInstance(boolean isMultiValueIndex, String type, String name, String algorithm,
+      Set<String> clustersToIndex, OIndexDefinition indexDefinition, ORID identity, ODocument configuration) {
     if (isMultiValueIndex)
-      return new OIndexRemoteMultiValue(name, type, identity, indexDefinition, configuration, clustersToIndex);
+      return new OIndexRemoteMultiValue(name, type, algorithm, identity, indexDefinition, configuration, clustersToIndex);
 
-    return new OIndexRemoteOneValue(name, type, identity, indexDefinition, configuration, clustersToIndex);
+    return new OIndexRemoteOneValue(name, type, algorithm, identity, indexDefinition, configuration, clustersToIndex);
   }
 
   @Override
@@ -142,12 +144,12 @@ public class OIndexManagerRemote extends OIndexManagerAbstract {
           try {
             final boolean isMultiValue = ODefaultIndexFactory.isMultiValueIndex((String) d.field(OIndexInternal.CONFIG_TYPE));
 
-            final OIndexInternal.IndexMetadata newIndexMetadata = OIndexAbstract.loadMetadataInternal(d,
+            final OIndexMetadata newIndexMetadata = OIndexAbstract.loadMetadataInternal(d,
                 (String) d.field(OIndexInternal.CONFIG_TYPE), d.<String> field(OIndexInternal.ALGORITHM),
                 d.<String> field(OIndexInternal.VALUE_CONTAINER_ALGORITHM));
 
             addIndexInternal(getRemoteIndexInstance(isMultiValue, newIndexMetadata.getType(), newIndexMetadata.getName(),
-                newIndexMetadata.getClustersToIndex(), newIndexMetadata.getIndexDefinition(),
+                newIndexMetadata.getAlgorithm(), newIndexMetadata.getClustersToIndex(), newIndexMetadata.getIndexDefinition(),
                 (ORID) d.field(OIndexAbstract.CONFIG_MAP_RID), d));
           } catch (Exception e) {
             OLogManager.instance().error(this, "Error on loading of index by configuration: %s", e, d);
@@ -158,4 +160,13 @@ public class OIndexManagerRemote extends OIndexManagerAbstract {
       releaseExclusiveLock();
     }
   }
+
+  protected OIndex<?> preProcessBeforeReturn(final OIndex<?> index) {
+    if (index instanceof OIndexRemoteMultiValue)
+      return new OIndexTxAwareMultiValue(getDatabase(), (OIndex<Set<OIdentifiable>>) index);
+    else if (index instanceof OIndexRemoteOneValue)
+      return new OIndexTxAwareOneValue(getDatabase(), (OIndex<OIdentifiable>) index);
+    return index;
+  }
+
 }

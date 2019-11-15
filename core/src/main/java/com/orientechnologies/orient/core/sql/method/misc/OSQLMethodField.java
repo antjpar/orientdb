@@ -28,6 +28,7 @@ import com.orientechnologies.orient.core.record.impl.ODocumentHelper;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 
@@ -48,6 +49,8 @@ public class OSQLMethodField extends OAbstractSQLMethod {
     if (iParams[0] == null)
       return null;
 
+    final String paramAsString = iParams[0].toString();
+
     if (ioResult != null) {
       if (ioResult instanceof String) {
         try {
@@ -61,18 +64,27 @@ public class OSQLMethodField extends OAbstractSQLMethod {
       } else if (ioResult instanceof Collection<?> || ioResult instanceof OMultiCollectionIterator<?>
           || ioResult.getClass().isArray()) {
         final List<Object> result = new ArrayList<Object>(OMultiValue.getSize(ioResult));
-        for (Object o : OMultiValue.getMultiValueIterable(ioResult)) {
-          result.add(ODocumentHelper.getFieldValue(o, iParams[0].toString()));
+        for (Object o : OMultiValue.getMultiValueIterable(ioResult, false)) {
+          Object newlyAdded = ODocumentHelper.getFieldValue(o, paramAsString);
+          if (OMultiValue.isMultiValue(newlyAdded)) {
+            if(newlyAdded instanceof Map || newlyAdded instanceof OIdentifiable){
+              result.add(newlyAdded);
+            }else for (Object item : OMultiValue.getMultiValueIterable(newlyAdded)) {
+              result.add(item);
+            }
+          } else {
+            result.add(newlyAdded);
+          }
         }
         return result;
       }
     }
 
-    if (ioResult != null) {
+    if (!"*".equals(paramAsString) && ioResult != null) {
       if (ioResult instanceof OCommandContext) {
-        ioResult = ((OCommandContext) ioResult).getVariable(iParams[0].toString());
+        ioResult = ((OCommandContext) ioResult).getVariable(paramAsString);
       } else {
-        ioResult = ODocumentHelper.getFieldValue(ioResult, iParams[0].toString(), iContext);
+        ioResult = ODocumentHelper.getFieldValue(ioResult, paramAsString, iContext);
       }
     }
 

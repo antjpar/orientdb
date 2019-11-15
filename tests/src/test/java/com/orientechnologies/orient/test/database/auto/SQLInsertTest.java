@@ -16,10 +16,8 @@
 package com.orientechnologies.orient.test.database.auto;
 
 import com.orientechnologies.orient.core.command.script.OCommandScript;
-import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
-import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
-import com.orientechnologies.orient.core.id.OClusterPosition;
+import com.orientechnologies.orient.core.exception.OValidationException;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.iterator.ORecordIteratorCluster;
@@ -30,16 +28,13 @@ import com.orientechnologies.orient.core.record.ORecord;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.sql.OCommandSQL;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
-import com.orientechnologies.orient.core.storage.OStorage;
 import org.testng.Assert;
 import org.testng.annotations.Optional;
 import org.testng.annotations.Parameters;
 import org.testng.annotations.Test;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
+import java.math.BigDecimal;
+import java.util.*;
 
 /**
  * If some of the tests start to fail then check cluster number in queries, e.g #7:1. It can be because the order of clusters could
@@ -55,13 +50,22 @@ public class SQLInsertTest extends DocumentDBBaseTest {
 
   @Test
   public void insertOperator() {
+    if (!database.getMetadata().getSchema().existsClass("Account"))
+      database.getMetadata().getSchema().createClass("Account");
+
     final int clId = database.addCluster("anotherdefault");
     final OClass profileClass = database.getMetadata().getSchema().getClass("Account");
     profileClass.addClusterId(clId);
 
+    if (!database.getMetadata().getSchema().existsClass("Address"))
+      database.getMetadata().getSchema().createClass("Address");
+
     int addressId = database.getMetadata().getSchema().getClass("Address").getDefaultClusterId();
 
-    List<OClusterPosition> positions = getValidPositions(addressId);
+    List<Long> positions = getValidPositions(addressId);
+
+    if (!database.getMetadata().getSchema().existsClass("Profile"))
+      database.getMetadata().getSchema().createClass("Profile");
 
     ODocument doc = (ODocument) database.command(
         new OCommandSQL("insert into Profile (name, surname, salary, location, dummy) values ('Luca','Smith', 109.9, #" + addressId
@@ -92,7 +96,7 @@ public class SQLInsertTest extends DocumentDBBaseTest {
   public void insertWithWildcards() {
     int addressId = database.getMetadata().getSchema().getClass("Address").getDefaultClusterId();
 
-    List<OClusterPosition> positions = getValidPositions(addressId);
+    List<Long> positions = getValidPositions(addressId);
 
     ODocument doc = (ODocument) database.command(
         new OCommandSQL("insert into Profile (name, surname, salary, location, dummy) values (?,?,?,?,?)")).execute("Marc",
@@ -239,16 +243,19 @@ public class SQLInsertTest extends DocumentDBBaseTest {
     if (schema.getClass("test") == null)
       schema.createClass("test");
 
+    final List<ODocument> usersCount = database.query(new OSQLSynchQuery<ODocument>("select count(*) from OUser"));
+    final long uCount = usersCount.get(0).field("count");
+
     ODocument doc = (ODocument) database.command(new OCommandSQL("INSERT INTO test SET names = (select name from OUser)"))
         .execute();
 
     Assert.assertTrue(doc != null);
     Assert.assertNotNull(doc.field("names"));
     Assert.assertTrue(doc.field("names") instanceof Collection);
-    Assert.assertEquals(((Collection<?>) doc.field("names")).size(), 3);
+    Assert.assertEquals(((Collection<?>) doc.field("names")).size(), uCount);
   }
 
-  @Test
+  @Test(dependsOnMethods = "insertOperator")
   public void insertCluster() {
     ODocument doc = database.command(
         new OCommandSQL("insert into Account cluster anotherdefault (id, title) values (10, 'NoSQL movement')")).execute();
@@ -259,7 +266,7 @@ public class SQLInsertTest extends DocumentDBBaseTest {
   }
 
   public void updateMultipleFields() {
-    List<OClusterPosition> positions = getValidPositions(3);
+    List<Long> positions = getValidPositions(3);
 
     OIdentifiable result = database.command(
         new OCommandSQL("  INSERT INTO Account SET id= 3232,name= 'my name',map= {\"key\":\"value\"},dir= '',user= #3:"
@@ -292,18 +299,13 @@ public class SQLInsertTest extends DocumentDBBaseTest {
     }
   }
 
-  private List<OClusterPosition> getValidPositions(int clusterId) {
-    final List<OClusterPosition> positions = new ArrayList<OClusterPosition>();
+  @Test(expectedExceptions = OValidationException.class)
+  public void insertSelectFromProjection() {
+    database.command(new OCommandSQL("CREATE CLASS ProjectedInsert")).execute();
+    database.command(new OCommandSQL("CREATE property ProjectedInsert.a Integer (max 3)")).execute();
+    database.getMetadata().getSchema().reload();
 
-    final ORecordIteratorCluster<?> iteratorCluster = database.browseCluster(database.getClusterNameById(clusterId));
-
-    for (int i = 0; i < 100; i++) {
-      if (!iteratorCluster.hasNext())
-        break;
-      ORecord doc = iteratorCluster.next();
-      positions.add(doc.getIdentity().getClusterPosition());
-    }
-    return positions;
+    database.command(new OCommandSQL("INSERT INTO ProjectedInsert FROM select 10 as a ")).execute();
   }
 
   public void insertWithReturn() {
@@ -335,7 +337,7 @@ public class SQLInsertTest extends DocumentDBBaseTest {
     ORID another = ((OIdentifiable) res1).getIdentity();
     final String sql = "INSERT INTO Actor2 RETURN $current.FirstName  FROM SELECT * FROM [" + doc.getIdentity().toString() + ","
         + another.toString() + "]";
-    ArrayList res3 = database.command(new OCommandSQL(sql)).execute();
+    List res3 = database.command(new OCommandSQL(sql)).execute();
     Assert.assertEquals(res3.size(), 2);
     Assert.assertTrue(((List) res3).get(0) instanceof ODocument);
     final ODocument res3doc = (ODocument) res3.get(0);
@@ -347,14 +349,14 @@ public class SQLInsertTest extends DocumentDBBaseTest {
 
     // create record using content keyword and update it in sql batch passing recordID between commands
     final String sql2 = "let var1=INSERT INTO Actor2 CONTENT {Name:\"content\"} RETURN $current.@rid\n"
-        + "let var2=UPDATE $var1 SET Bingo=1 RETURN AFTER @rid\n" + "return $var2\n" + "end";
+        + "let var2=UPDATE $var1 SET Bingo=1 RETURN AFTER @rid\n" + "return $var2";
     List<?> res_sql2 = database.command(new OCommandScript("sql", sql2)).execute();
     Assert.assertEquals(res_sql2.size(), 1);
     Assert.assertTrue(((List) res_sql2).get(0) instanceof ORecordId);
 
     // create record using content keyword and update it in sql batch passing recordID between commands
     final String sql3 = "let var1=INSERT INTO Actor2 CONTENT {Name:\"Bingo owner\"} RETURN @this\n"
-        + "let var2=UPDATE $var1 SET Bingo=1 RETURN AFTER\n" + "return $var2\n" + "end";
+        + "let var2=UPDATE $var1 SET Bingo=1 RETURN AFTER\n" + "return $var2";
     List<?> res_sql3 = database.command(new OCommandScript("sql", sql3)).execute();
     Assert.assertEquals(res_sql3.size(), 1);
     Assert.assertTrue(((List) res_sql3).get(0) instanceof ODocument);
@@ -363,4 +365,281 @@ public class SQLInsertTest extends DocumentDBBaseTest {
     Assert.assertEquals(sql3doc.field("Name"), "Bingo owner");
   }
 
+  public void testAutoConversionOfEmbeddededSetNoLinkedClass() {
+    OClass c = database.getMetadata().getSchema().getOrCreateClass("TestConvert");
+    c.createProperty("embeddedSetNoLinkedClass", OType.EMBEDDEDSET);
+
+    ODocument doc = database
+        .command(
+            new OCommandSQL(
+                "INSERT INTO TestConvert SET name = 'embeddedSetNoLinkedClass', embeddedSetNoLinkedClass = [{'line1':'123 Fake Street'}]"))
+        .execute();
+
+    Assert.assertTrue(doc.field("embeddedSetNoLinkedClass") instanceof Set);
+
+    Set addr = doc.field("embeddedSetNoLinkedClass");
+    for (Object o : addr) {
+      Assert.assertTrue(o instanceof ODocument);
+    }
+  }
+
+  public void testAutoConversionOfEmbeddededSetWithLinkedClass() {
+    OClass c = database.getMetadata().getSchema().getOrCreateClass("TestConvert");
+    c.createProperty("embeddedSetWithLinkedClass", OType.EMBEDDEDSET,
+        database.getMetadata().getSchema().getOrCreateClass("TestConvertLinkedClass"));
+
+    ODocument doc = database
+        .command(
+            new OCommandSQL(
+                "INSERT INTO TestConvert SET name = 'embeddedSetWithLinkedClass', embeddedSetWithLinkedClass = [{'line1':'123 Fake Street'}]"))
+        .execute();
+
+    Assert.assertTrue(doc.field("embeddedSetWithLinkedClass") instanceof Set);
+
+    Set addr = doc.field("embeddedSetWithLinkedClass");
+    for (Object o : addr) {
+      Assert.assertTrue(o instanceof ODocument);
+      Assert.assertEquals(((ODocument) o).getClassName(), "TestConvertLinkedClass");
+    }
+  }
+
+  public void testAutoConversionOfEmbeddededListNoLinkedClass() {
+    OClass c = database.getMetadata().getSchema().getOrCreateClass("TestConvert");
+    c.createProperty("embeddedListNoLinkedClass", OType.EMBEDDEDLIST);
+
+    ODocument doc = database
+        .command(
+            new OCommandSQL(
+                "INSERT INTO TestConvert SET name = 'embeddedListNoLinkedClass', embeddedListNoLinkedClass = [{'line1':'123 Fake Street'}]"))
+        .execute();
+
+    Assert.assertTrue(doc.field("embeddedListNoLinkedClass") instanceof List);
+
+    List addr = doc.field("embeddedListNoLinkedClass");
+    for (Object o : addr) {
+      Assert.assertTrue(o instanceof ODocument);
+    }
+  }
+
+  public void testAutoConversionOfEmbeddededListWithLinkedClass() {
+    OClass c = database.getMetadata().getSchema().getOrCreateClass("TestConvert");
+    if (!c.existsProperty("embeddedListWithLinkedClass"))
+      c.createProperty("embeddedListWithLinkedClass", OType.EMBEDDEDLIST,
+          database.getMetadata().getSchema().getOrCreateClass("TestConvertLinkedClass"));
+
+    ODocument doc = database
+        .command(
+            new OCommandSQL(
+                "INSERT INTO TestConvert SET name = 'embeddedListWithLinkedClass', embeddedListWithLinkedClass = [{'line1':'123 Fake Street'}]"))
+        .execute();
+
+    Assert.assertTrue(doc.field("embeddedListWithLinkedClass") instanceof List);
+
+    List addr = doc.field("embeddedListWithLinkedClass");
+    for (Object o : addr) {
+      Assert.assertTrue(o instanceof ODocument);
+      Assert.assertEquals(((ODocument) o).getClassName(), "TestConvertLinkedClass");
+    }
+  }
+
+  public void testAutoConversionOfEmbeddededMapNoLinkedClass() {
+    OClass c = database.getMetadata().getSchema().getOrCreateClass("TestConvert");
+    c.createProperty("embeddedMapNoLinkedClass", OType.EMBEDDEDMAP);
+
+    ODocument doc = database
+        .command(
+            new OCommandSQL(
+                "INSERT INTO TestConvert SET name = 'embeddedMapNoLinkedClass', embeddedMapNoLinkedClass = {test:{'line1':'123 Fake Street'}}"))
+        .execute();
+
+    Assert.assertTrue(doc.field("embeddedMapNoLinkedClass") instanceof Map);
+
+    Map addr = doc.field("embeddedMapNoLinkedClass");
+    for (Object o : addr.values()) {
+      Assert.assertTrue(o instanceof ODocument);
+    }
+  }
+
+  public void testAutoConversionOfEmbeddededMapWithLinkedClass() {
+    OClass c = database.getMetadata().getSchema().getOrCreateClass("TestConvert");
+    c.createProperty("embeddedMapWithLinkedClass", OType.EMBEDDEDMAP,
+        database.getMetadata().getSchema().getOrCreateClass("TestConvertLinkedClass"));
+
+    ODocument doc = database
+        .command(
+            new OCommandSQL(
+                "INSERT INTO TestConvert SET name = 'embeddedMapWithLinkedClass', embeddedMapWithLinkedClass = {test:{'line1':'123 Fake Street'}}"))
+        .execute();
+
+    Assert.assertTrue(doc.field("embeddedMapWithLinkedClass") instanceof Map);
+
+    Map addr = doc.field("embeddedMapWithLinkedClass");
+    for (Object o : addr.values()) {
+      Assert.assertTrue(o instanceof ODocument);
+      Assert.assertEquals(((ODocument) o).getClassName(), "TestConvertLinkedClass");
+    }
+  }
+
+  public void testAutoConversionOfEmbeddededNoLinkedClass() {
+    OClass c = database.getMetadata().getSchema().getOrCreateClass("TestConvert");
+    c.createProperty("embeddedNoLinkedClass", OType.EMBEDDED);
+
+    ODocument doc = database.command(
+        new OCommandSQL(
+            "INSERT INTO TestConvert SET name = 'embeddedNoLinkedClass', embeddedNoLinkedClass = {'line1':'123 Fake Street'}"))
+        .execute();
+
+    Assert.assertTrue(doc.field("embeddedNoLinkedClass") instanceof ODocument);
+  }
+
+  public void testEmbeddedDates() {
+    OClass c = database.getMetadata().getSchema().getOrCreateClass("TestEmbeddedDates");
+
+    database
+        .command(
+            new OCommandSQL(
+                "insert into TestEmbeddedDates set events = [{\"on\": date(\"2005-09-08 04:00:00\", \"yyyy-MM-dd HH:mm:ss\", \"UTC\")}]\n"))
+        .execute();
+
+    List<ODocument> result = database.query(new OSQLSynchQuery<ODocument>("select from TestEmbeddedDates"));
+
+    Assert.assertEquals(result.size(), 1);
+    boolean found = false;
+    ODocument doc = result.get(0);
+    Collection events = doc.field("events");
+    for (Object event : events) {
+      Assert.assertTrue(event instanceof Map);
+      Object dateObj = ((Map) event).get("on");
+      Assert.assertTrue(dateObj instanceof Date);
+      Calendar cal = new GregorianCalendar();
+      cal.setTime((Date) dateObj);
+      Assert.assertEquals(cal.get(Calendar.YEAR), 2005);
+      found = true;
+    }
+
+    doc.delete();
+    Assert.assertEquals(found, true);
+
+  }
+
+  public void testAutoConversionOfEmbeddededWithLinkedClass() {
+    OClass c = database.getMetadata().getSchema().getOrCreateClass("TestConvert");
+    c.createProperty("embeddedWithLinkedClass", OType.EMBEDDED,
+        database.getMetadata().getSchema().getOrCreateClass("TestConvertLinkedClass"));
+
+    ODocument doc = database.command(
+        new OCommandSQL(
+            "INSERT INTO TestConvert SET name = 'embeddedWithLinkedClass', embeddedWithLinkedClass = {'line1':'123 Fake Street'}"))
+        .execute();
+
+    Assert.assertTrue(doc.field("embeddedWithLinkedClass") instanceof ODocument);
+    Assert.assertEquals(((ODocument) doc.field("embeddedWithLinkedClass")).getClassName(), "TestConvertLinkedClass");
+  }
+
+  public void testInsertEmbeddedWithRecordAttributes() {
+    OClass c = database.getMetadata().getSchema().getOrCreateClass("EmbeddedWithRecordAttributes");
+    c.createProperty("like", OType.EMBEDDED,
+        database.getMetadata().getSchema().getOrCreateClass("EmbeddedWithRecordAttributes_Like"));
+
+    ODocument doc = database.command(
+        new OCommandSQL("INSERT INTO EmbeddedWithRecordAttributes SET `like` = { \n" + "      count: 0, \n"
+            + "      latest: [], \n" + "      '@type': 'document', \n" + "      '@class': 'EmbeddedWithRecordAttributes_Like'\n"
+            + "    } ")).execute();
+
+    Assert.assertTrue(doc.field("like") instanceof OIdentifiable);
+    Assert.assertEquals(((ODocument) doc.field("like")).getClassName(), "EmbeddedWithRecordAttributes_Like");
+    Assert.assertEquals(((ODocument) doc.field("like")).field("count"), 0);
+  }
+
+  public void testInsertEmbeddedWithRecordAttributes2() {
+    OClass c = database.getMetadata().getSchema().getOrCreateClass("EmbeddedWithRecordAttributes2");
+    c.createProperty("like", OType.EMBEDDED,
+        database.getMetadata().getSchema().getOrCreateClass("EmbeddedWithRecordAttributes2_Like"));
+
+    ODocument doc = database.command(
+        new OCommandSQL("INSERT INTO EmbeddedWithRecordAttributes2 SET `like` = { \n" + "      count: 0, \n"
+            + "      latest: [], \n" + "      @type: 'document', \n" + "      @class: 'EmbeddedWithRecordAttributes2_Like'\n"
+            + "    } ")).execute();
+
+    Assert.assertTrue(doc.field("like") instanceof OIdentifiable);
+    Assert.assertEquals(((ODocument) doc.field("like")).getClassName(), "EmbeddedWithRecordAttributes2_Like");
+    Assert.assertEquals(((ODocument) doc.field("like")).field("count"), 0);
+  }
+
+  public void testInsertWithClusterAsFieldName() {
+    OClass c = database.getMetadata().getSchema().getOrCreateClass("InsertWithClusterAsFieldName");
+
+    database.command(
+        new OCommandSQL("INSERT INTO InsertWithClusterAsFieldName ( `cluster` ) values ( 'foo' )")).execute();
+
+    List<ODocument> result = database
+        .query(new OSQLSynchQuery<ODocument>("SELECT FROM InsertWithClusterAsFieldName"));
+
+    Assert.assertEquals(result.size(), 1);
+    Assert.assertEquals(result.get(0).field("cluster"), "foo");
+  }
+
+  public void testInsertEmbeddedBigDecimal() {
+    // issue #6670
+    database.getMetadata().getSchema().getOrCreateClass("TestInsertEmbeddedBigDecimal");
+    database.command(new OCommandSQL("create property TestInsertEmbeddedBigDecimal.ed embeddedlist decimal")).execute();
+    database.command(new OCommandSQL("INSERT INTO TestInsertEmbeddedBigDecimal CONTENT {\"ed\": [5,null,5]}")).execute();
+    List<ODocument> result = database.query(new OSQLSynchQuery<ODocument>("SELECT FROM TestInsertEmbeddedBigDecimal"));
+    Assert.assertEquals(result.size(), 1);
+    Iterable ed = result.get(0).field("ed");
+    Object o = ed.iterator().next();
+    Assert.assertEquals(o.getClass(), BigDecimal.class);
+    Assert.assertEquals(((BigDecimal)o).intValue(), 5);
+  }
+
+  public void testInsertQuotedString(){
+    database.getMetadata().getSchema().createClass("testInsertQuotedString");
+    String stm = "INSERT INTO `testInsertQuotedString` (name) VALUES ( \"\\\"foo\\\"\")";
+    database.command(new OCommandSQL(stm)).execute();
+    List<ODocument> result = database.query(new OSQLSynchQuery<Object>("SELECT FROM testInsertQuotedString"));
+    Assert.assertEquals(result.size(), 1);
+    Assert.assertEquals(result.get(0).field("name"), "\"foo\"");
+
+  }
+
+  public void testInsertQuotedString2(){
+    database.getMetadata().getSchema().createClass("testInsertQuotedString2");
+    String stm = "INSERT INTO `testInsertQuotedString2` (name) VALUES (?)";
+    database.command(new OCommandSQL(stm)).execute("\"foo\"");
+    List<ODocument> result = database.query(new OSQLSynchQuery<Object>("SELECT FROM testInsertQuotedString2"));
+    Assert.assertEquals(result.size(), 1);
+    Assert.assertEquals(result.get(0).field("name"), "\"foo\"");
+
+  }
+
+  public void testInsertJson1(){
+    database.getMetadata().getSchema().createClass("testInsertJson1");
+    database.getMetadata().getSchema().createClass("testInsertJson1x1");
+    database.getMetadata().getSchema().createClass("testInsertJson1x2");
+    String stm = "INSERT INTO `testInsertJson1` (deals) VALUES ( [{\"goods\":[{ \"GoodsDescription\":\" \\\" coma-->,<-- coma  \\\" \", \"@class\":\"testInsertJson1x1\",\"@type\":\"d\"}],\n"
+        + "\"@class\":\"testInsertJson1x2\",\"@type\":\"d\"}])";
+    database.command(new OCommandSQL(stm)).execute();
+    List<ODocument> result = database.query(new OSQLSynchQuery<Object>("SELECT FROM testInsertJson1"));
+    Assert.assertEquals(result.size(), 1);
+    Collection deals = result.get(0).field("deals");
+    ODocument values = (ODocument) deals.iterator().next();
+    Collection<ODocument> goods = (Collection<ODocument>) values.field("goods");
+    ODocument item = goods.iterator().next();
+
+    Assert.assertEquals(item.field("GoodsDescription"), " \" coma-->,<-- coma  \" ");
+
+  }
+  private List<Long> getValidPositions(int clusterId) {
+    final List<Long> positions = new ArrayList<Long>();
+
+    final ORecordIteratorCluster<?> iteratorCluster = database.browseCluster(database.getClusterNameById(clusterId));
+
+    for (int i = 0; i < 100; i++) {
+      if (!iteratorCluster.hasNext())
+        break;
+      ORecord doc = iteratorCluster.next();
+      positions.add(doc.getIdentity().getClusterPosition());
+    }
+    return positions;
+  }
 }

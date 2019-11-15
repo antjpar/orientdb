@@ -19,33 +19,35 @@
    */
 package com.orientechnologies.orient.server.network.protocol.http.command.post;
 
-import java.io.IOException;
- import java.util.ArrayList;
- import java.util.Collection;
- import java.util.HashMap;
- import java.util.Map;
- import java.util.Map.Entry;
+import com.orientechnologies.common.util.OPatternConst;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+import com.orientechnologies.orient.core.id.ORecordId;
+import com.orientechnologies.orient.core.index.OIndex;
+import com.orientechnologies.orient.core.metadata.schema.OClass;
+import com.orientechnologies.orient.core.metadata.schema.OPropertyImpl;
+import com.orientechnologies.orient.core.metadata.schema.OType;
+import com.orientechnologies.orient.core.record.impl.ODocument;
+import com.orientechnologies.orient.core.record.impl.ODocumentHelper;
+import com.orientechnologies.orient.core.serialization.serializer.record.string.ORecordSerializerStringAbstract;
+import com.orientechnologies.orient.server.network.protocol.http.OHttpRequest;
+import com.orientechnologies.orient.server.network.protocol.http.OHttpResponse;
+import com.orientechnologies.orient.server.network.protocol.http.OHttpUtils;
+import com.orientechnologies.orient.server.network.protocol.http.command.OServerCommandAuthenticatedDbAbstract;
 
- import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
- import com.orientechnologies.orient.core.id.ORecordId;
- import com.orientechnologies.orient.core.index.OIndex;
- import com.orientechnologies.orient.core.metadata.schema.OClass;
- import com.orientechnologies.orient.core.metadata.schema.OPropertyImpl;
- import com.orientechnologies.orient.core.metadata.schema.OType;
- import com.orientechnologies.orient.core.record.impl.ODocument;
- import com.orientechnologies.orient.core.record.impl.ODocumentHelper;
- import com.orientechnologies.orient.core.serialization.serializer.record.string.ORecordSerializerStringAbstract;
- import com.orientechnologies.orient.server.network.protocol.http.OHttpRequest;
- import com.orientechnologies.orient.server.network.protocol.http.OHttpResponse;
- import com.orientechnologies.orient.server.network.protocol.http.OHttpUtils;
- import com.orientechnologies.orient.server.network.protocol.http.command.OServerCommandAuthenticatedDbAbstract;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Map.Entry;
 
 @SuppressWarnings("unchecked")
  public class OServerCommandPostStudio extends OServerCommandAuthenticatedDbAbstract {
    private static final String[] NAMES = { "POST|studio/*" };
 
-   public boolean execute(final OHttpRequest iRequest, OHttpResponse iResponse) throws Exception {
-     ODatabaseDocumentTx db = null;
+  public boolean execute(final OHttpRequest iRequest, OHttpResponse iResponse) throws Exception {
+     ODatabaseDocument db = null;
 
      try {
        final String[] urlParts = checkSyntax(iRequest.url, 3, "Syntax error: studio/<database>/<context>");
@@ -102,7 +104,7 @@ import java.io.IOException;
      return false;
    }
 
-   private void executeClassProperties(final OHttpRequest iRequest, final OHttpResponse iResponse, final ODatabaseDocumentTx db,
+   private void executeClassProperties(final OHttpRequest iRequest, final OHttpResponse iResponse, final ODatabaseDocument db,
        final String operation, final String rid, final String className, final Map<String, String> fields) throws IOException {
      // GET THE TARGET CLASS
      final OClass cls = db.getMetadata().getSchema().getClass(rid);
@@ -155,7 +157,7 @@ import java.io.IOException;
      }
    }
 
-   private void executeClasses(final OHttpRequest iRequest, final OHttpResponse iResponse, final ODatabaseDocumentTx db,
+   private void executeClasses(final OHttpRequest iRequest, final OHttpResponse iResponse, final ODatabaseDocument db,
        final String operation, final String rid, final String className, final Map<String, String> fields) throws IOException {
      if ("add".equals(operation)) {
        iRequest.data.commandInfo = "Studio add class";
@@ -194,7 +196,7 @@ import java.io.IOException;
      }
    }
 
-   private void executeClusters(final OHttpRequest iRequest, final OHttpResponse iResponse, final ODatabaseDocumentTx db,
+   private void executeClusters(final OHttpRequest iRequest, final OHttpResponse iResponse, final ODatabaseDocument db,
        final String operation, final String rid, final String iClusterName, final Map<String, String> fields) throws IOException {
      if ("add".equals(operation)) {
        iRequest.data.commandInfo = "Studio add cluster";
@@ -207,14 +209,14 @@ import java.io.IOException;
      } else if ("del".equals(operation)) {
        iRequest.data.commandInfo = "Studio delete cluster";
 
-       db.dropCluster(rid, true);
+       db.dropCluster(rid, false);
 
        iResponse.send(OHttpUtils.STATUS_OK_CODE, "OK", OHttpUtils.CONTENT_TEXT_PLAIN, "Cluster " + fields.get("name")
            + "' deleted successfully", null);
      }
    }
 
-   private void executeDocument(final OHttpRequest iRequest, final OHttpResponse iResponse, final ODatabaseDocumentTx db,
+   private void executeDocument(final OHttpRequest iRequest, final OHttpResponse iResponse, final ODatabaseDocument db,
        final String operation, final String rid, final String className, final Map<String, String> fields) throws IOException {
      if ("edit".equals(operation)) {
        iRequest.data.commandInfo = "Studio edit document";
@@ -285,7 +287,7 @@ import java.io.IOException;
        iResponse.send(500, "Error", OHttpUtils.CONTENT_TEXT_PLAIN, "Operation not supported", null);
    }
 
-   private void executeClassIndexes(final OHttpRequest iRequest, final OHttpResponse iResponse, final ODatabaseDocumentTx db,
+   private void executeClassIndexes(final OHttpRequest iRequest, final OHttpResponse iResponse, final ODatabaseDocument db,
        final String operation, final String rid, final String className, final Map<String, String> fields) throws IOException {
      // GET THE TARGET CLASS
      final OClass cls = db.getMetadata().getSchema().getClass(rid);
@@ -299,7 +301,7 @@ import java.io.IOException;
        iRequest.data.commandInfo = "Studio add index";
 
        try {
-         final String[] fieldNames = fields.get("fields").trim().split("\\s*,\\s*");
+         final String[] fieldNames = OPatternConst.PATTERN_COMMA_SEPARATED.split(fields.get("fields").trim());
          final String indexType = fields.get("type");
 
          cls.createIndex(fields.get("name"), indexType, fieldNames);

@@ -1,56 +1,213 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 
 package com.orientechnologies.common.profiler;
 
 import com.orientechnologies.common.concur.resource.OSharedResourceAbstract;
+import com.orientechnologies.common.io.OFileUtils;
+import com.orientechnologies.common.log.OLogManager;
 import com.orientechnologies.common.util.OPair;
+import com.orientechnologies.orient.core.OOrientStartupListener;
+import com.orientechnologies.orient.core.Orient;
+import com.orientechnologies.orient.core.config.OGlobalConfiguration;
+import com.orientechnologies.orient.core.storage.OStorage;
+import com.orientechnologies.orient.core.storage.cache.OReadCache;
+import com.orientechnologies.orient.core.storage.cache.OWriteCache;
+import com.orientechnologies.orient.core.storage.impl.local.paginated.OLocalPaginatedStorage;
 
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
+import java.io.File;
+import java.io.PrintStream;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadInfo;
+import java.lang.management.ThreadMXBean;
+import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
-public abstract class OAbstractProfiler extends OSharedResourceAbstract implements OProfilerMBean {
+public abstract class OAbstractProfiler extends OSharedResourceAbstract
+    implements OProfiler, OOrientStartupListener, OProfilerMXBean {
 
-  protected final Map<String, OProfilerHookValue>        hooks         = new ConcurrentHashMap<String, OProfilerHookValue>();
+  protected final Map<String, OProfilerHookRuntime>      hooks         = new ConcurrentHashMap<String, OProfilerHookRuntime>();
   protected final ConcurrentHashMap<String, String>      dictionary    = new ConcurrentHashMap<String, String>();
   protected final ConcurrentHashMap<String, METRIC_TYPE> types         = new ConcurrentHashMap<String, METRIC_TYPE>();
-  protected long                                         recordingFrom = -1;
+  protected       long                                   recordingFrom = -1;
+  protected TimerTask autoDumpTask;
+  protected List<OProfilerListener> listeners = new ArrayList<OProfilerListener>();
 
   public interface OProfilerHookValue {
-    public Object getValue();
+    Object getValue();
+  }
+
+  public class OProfilerHookRuntime {
+    public OProfilerHookValue hook;
+    public METRIC_TYPE        type;
+
+    public OProfilerHookRuntime(final OProfilerHookValue hook, final METRIC_TYPE type) {
+      this.hook = hook;
+      this.type = type;
+    }
+  }
+
+  public class OProfilerHookStatic {
+    public Object      value;
+    public METRIC_TYPE type;
+
+    public OProfilerHookStatic(final Object value, final METRIC_TYPE type) {
+      this.value = value;
+      this.type = type;
+    }
+  }
+
+  private static final class MemoryChecker extends TimerTask {
+    @Override
+    public void run() {
+      try {
+        final long jvmTotMemory = Runtime.getRuntime().totalMemory();
+        final long jvmMaxMemory = Runtime.getRuntime().maxMemory();
+
+        for (OStorage s : Orient.instance().getStorages()) {
+          if (s instanceof OLocalPaginatedStorage) {
+            final OReadCache dk = ((OLocalPaginatedStorage) s).getReadCache();
+            final OWriteCache wk = ((OLocalPaginatedStorage) s).getWriteCache();
+            if (dk == null || wk == null)
+              // NOT YET READY
+              continue;
+
+            final long totalDiskCacheUsedMemory = (dk.getUsedMemory() + wk.getExclusiveWriteCachePagesSize()) / OFileUtils.MEGABYTE;
+            final long maxDiskCacheUsedMemory = OGlobalConfiguration.DISK_CACHE_SIZE.getValueAsLong();
+
+            // CHECK IF THERE IS MORE THAN 40% HEAP UNUSED AND DISK-CACHE IS 80% OF THE MAXIMUM SIZE
+            if ((jvmTotMemory * 140 / 100) < jvmMaxMemory && (totalDiskCacheUsedMemory * 120 / 100) > maxDiskCacheUsedMemory) {
+
+              final long suggestedMaxHeap = jvmTotMemory * 120 / 100;
+              final long suggestedDiskCache =
+                  OGlobalConfiguration.DISK_CACHE_SIZE.getValueAsLong() + (jvmMaxMemory - suggestedMaxHeap) / OFileUtils.MEGABYTE;
+
+              OLogManager.instance().info(this,
+                  "Database '%s' uses %,dMB/%,dMB of DISKCACHE memory, while Heap is not completely used (usedHeap=%dMB maxHeap=%dMB). To improve performance set maxHeap to %dMB and DISKCACHE to %dMB",
+                  s.getName(), totalDiskCacheUsedMemory, maxDiskCacheUsedMemory, jvmTotMemory / OFileUtils.MEGABYTE,
+                  jvmMaxMemory / OFileUtils.MEGABYTE, suggestedMaxHeap / OFileUtils.MEGABYTE, suggestedDiskCache);
+
+              OLogManager.instance().info(this,
+                  "-> Open server.sh (or server.bat on Windows) and change the following variables: 1) MAXHEAP=-Xmx%dM 2) MAXDISKCACHE=%d",
+                  suggestedMaxHeap / OFileUtils.MEGABYTE, suggestedDiskCache);
+            }
+          }
+        }
+      } catch (Throwable e) {
+        OLogManager.instance().debug(this, "Error on memory checker task", e);
+      }
+    }
   }
 
   public OAbstractProfiler() {
+    Orient.instance().registerWeakOrientStartupListener(this);
   }
 
   public OAbstractProfiler(final OAbstractProfiler profiler) {
     hooks.putAll(profiler.hooks);
     dictionary.putAll(profiler.dictionary);
     types.putAll(profiler.types);
+
+    Orient.instance().registerWeakOrientStartupListener(this);
+  }
+
+  protected abstract void setTip(String iMessage, AtomicInteger counter);
+
+  protected abstract AtomicInteger getTip(String iMessage);
+
+  public abstract boolean isEnterpriseEdition();
+
+  public static String dumpEnvironment() {
+    final StringBuilder buffer = new StringBuilder();
+
+    final Runtime runtime = Runtime.getRuntime();
+
+    final long freeSpaceInMB = new File(".").getFreeSpace();
+    final long totalSpaceInMB = new File(".").getTotalSpace();
+
+    int stgs = 0;
+    long diskCacheUsed = 0;
+    long diskCacheTotal = 0;
+    for (OStorage stg : Orient.instance().getStorages()) {
+      if (stg instanceof OLocalPaginatedStorage) {
+        diskCacheUsed += ((OLocalPaginatedStorage) stg).getReadCache().getUsedMemory();
+        diskCacheTotal += OGlobalConfiguration.DISK_CACHE_SIZE.getValueAsLong() * 1024 * 1024;
+        stgs++;
+      }
+    }
+    try {
+      MBeanServer mbs = ManagementFactory.getPlatformMBeanServer();
+      ObjectName osMBeanName = ObjectName.getInstance(ManagementFactory.OPERATING_SYSTEM_MXBEAN_NAME);
+      if (mbs.isInstanceOf(osMBeanName, "com.sun.management.OperatingSystemMXBean")) {
+        final long osTotalMem = ((Number) mbs.getAttribute(osMBeanName, "TotalPhysicalMemorySize")).longValue();
+        final long osUsedMem = osTotalMem - ((Number) mbs.getAttribute(osMBeanName, "FreePhysicalMemorySize")).longValue();
+
+        buffer.append(String
+            .format("OrientDB Memory profiler: HEAP=%s of %s - DISKCACHE (%s dbs)=%s of %s - OS=%s of %s - FS=%s of %s",
+                OFileUtils.getSizeAsString(runtime.totalMemory() - runtime.freeMemory()),
+                OFileUtils.getSizeAsString(runtime.maxMemory()), stgs, OFileUtils.getSizeAsString(diskCacheUsed),
+                OFileUtils.getSizeAsString(diskCacheTotal), OFileUtils.getSizeAsString(osUsedMem),
+                OFileUtils.getSizeAsString(osTotalMem), OFileUtils.getSizeAsString(freeSpaceInMB),
+                OFileUtils.getSizeAsString(totalSpaceInMB)));
+        return buffer.toString();
+      }
+    } catch (Exception e) {
+      // Nothing to do. Proceed with default output
+    }
+
+    buffer.append(String.format("OrientDB Memory profiler: Heap=%s of %s - DiskCache (%s dbs)=%s of %s - FS=%s of %s",
+        OFileUtils.getSizeAsString(runtime.totalMemory() - runtime.freeMemory()), OFileUtils.getSizeAsString(runtime.maxMemory()),
+        stgs, OFileUtils.getSizeAsString(diskCacheUsed), OFileUtils.getSizeAsString(diskCacheTotal),
+        OFileUtils.getSizeAsString(freeSpaceInMB), OFileUtils.getSizeAsString(totalSpaceInMB)));
+
+    return buffer.toString();
+  }
+
+  @Override
+  public void onStartup() {
+    if (OGlobalConfiguration.PROFILER_ENABLED.getValueAsBoolean())
+      // ACTIVATE RECORDING OF THE PROFILER
+      startRecording();
+    installMemoryChecker();
   }
 
   public void shutdown() {
     stopRecording();
+  }
+
+  public int reportTip(final String iMessage) {
+    AtomicInteger counter = getTip(iMessage);
+    if (counter == null) {
+      // DUMP THE MESSAGE ONLY THE FIRST TIME
+      OLogManager.instance().info(this, "[TIP] " + iMessage);
+
+      counter = new AtomicInteger(0);
+    }
+
+    setTip(iMessage, counter);
+
+    return counter.incrementAndGet();
   }
 
   public boolean startRecording() {
@@ -89,7 +246,12 @@ public abstract class OAbstractProfiler extends OSharedResourceAbstract implemen
 
   @Override
   public String dump() {
-    return null;
+    return dumpEnvironment();
+  }
+
+  @Override
+  public void dump(final PrintStream out) {
+    out.println(dumpEnvironment());
   }
 
   @Override
@@ -138,7 +300,39 @@ public abstract class OAbstractProfiler extends OSharedResourceAbstract implemen
   }
 
   @Override
-  public void setAutoDump(int iNewValue) {
+  public void setAutoDump(final int iSeconds) {
+    if (autoDumpTask != null) {
+      // CANCEL ANY PREVIOUS RUNNING TASK
+      autoDumpTask.cancel();
+      autoDumpTask = null;
+    }
+
+    if (iSeconds > 0) {
+      OLogManager.instance().info(this, "Enabled auto dump of profiler every %d second(s)", iSeconds);
+
+      final int ms = iSeconds * 1000;
+
+      autoDumpTask = new TimerTask() {
+
+        @Override
+        public void run() {
+          final StringBuilder output = new StringBuilder();
+
+          output.append(
+              "\n*******************************************************************************************************************************************");
+          output.append("\nPROFILER AUTO DUMP OUTPUT (to disabled it set 'profiler.autoDump.interval' = 0):\n");
+          output.append(dump());
+          output.append(
+              "\n*******************************************************************************************************************************************");
+
+          OLogManager.instance().info(null, output.toString());
+        }
+      };
+
+      Orient.instance().scheduleTask(autoDumpTask, ms, ms);
+    } else
+      OLogManager.instance().info(this, "Auto dump of profiler disabled", iSeconds);
+
   }
 
   @Override
@@ -164,7 +358,7 @@ public abstract class OAbstractProfiler extends OSharedResourceAbstract implemen
     if (iName != null) {
       unregisterHookValue(iName);
       updateMetadata(iMetadataName, iDescription, iType);
-      hooks.put(iName, iHookValue);
+      hooks.put(iName, new OProfilerHookRuntime(iHookValue, iType));
     }
   }
 
@@ -205,11 +399,58 @@ public abstract class OAbstractProfiler extends OSharedResourceAbstract implemen
     return null;
   }
 
+  protected void installMemoryChecker() {
+    final long memoryCheckInterval = OGlobalConfiguration.PROFILER_MEMORYCHECK_INTERVAL.getValueAsLong();
+
+    if (memoryCheckInterval > 0)
+      Orient.instance().scheduleTask(new MemoryChecker(), memoryCheckInterval, memoryCheckInterval);
+  }
+
   /**
    * Updates the metric metadata.
    */
   protected void updateMetadata(final String iName, final String iDescription, final METRIC_TYPE iType) {
     if (iDescription != null && dictionary.putIfAbsent(iName, iDescription) == null)
       types.put(iName, iType);
+  }
+
+  @Override
+  public void registerListener(OProfilerListener listener) {
+    listeners.add(listener);
+  }
+
+  @Override
+  public void unregisterListener(OProfilerListener listener) {
+    listeners.remove(listener);
+  }
+
+  @Override
+  public String threadDump() {
+    final StringBuilder dump = new StringBuilder();
+    dump.append("THREAD DUMP\n");
+    final ThreadMXBean threadMXBean = ManagementFactory.getThreadMXBean();
+    final ThreadInfo[] threadInfos = threadMXBean.getThreadInfo(threadMXBean.getAllThreadIds(), 100);
+    for (ThreadInfo threadInfo : threadInfos) {
+      dump.append('"');
+      dump.append(threadInfo.getThreadName());
+      dump.append("\" id=");
+      dump.append(threadInfo.getThreadId());
+      dump.append(" ");
+      final Thread.State state = threadInfo.getThreadState();
+      dump.append("\n   java.lang.Thread.State: ");
+      dump.append(state);
+      final StackTraceElement[] stackTraceElements = threadInfo.getStackTrace();
+      for (final StackTraceElement stackTraceElement : stackTraceElements) {
+        dump.append("\n        at ");
+        dump.append(stackTraceElement);
+      }
+      dump.append("\n\n");
+    }
+    return dump.toString();
+  }
+
+  @Override
+  public METRIC_TYPE getType(final String k) {
+    return types.get(k);
   }
 }

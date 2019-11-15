@@ -1,26 +1,27 @@
 package com.orientechnologies.orient.core.iterator;
 
-import java.util.HashSet;
-import java.util.Set;
-
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.metadata.schema.OSchema;
 import com.orientechnologies.orient.core.metadata.schema.OType;
+import com.orientechnologies.orient.core.metadata.schema.clusterselection.ODefaultClusterSelectionStrategy;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
+import java.util.HashSet;
+import java.util.Set;
+
 /**
  * @author Artem Loginov
  */
 @Test
 public class ClassIteratorTest {
-  private static final boolean       RECREATE_DATABASE = true;
-  private static ODatabaseDocumentTx db                = null;
-  private Set<String>                names;
+  private static final boolean             RECREATE_DATABASE = true;
+  private static       ODatabaseDocumentTx db                = null;
+  private Set<String> names;
 
   @BeforeMethod
   public void setUp() throws Exception {
@@ -34,7 +35,7 @@ public class ClassIteratorTest {
     names.add("Daniel");
 
     for (String name : names) {
-      createPerson(name);
+      createPerson("Person", name);
     }
   }
 
@@ -89,6 +90,62 @@ public class ClassIteratorTest {
     Assert.assertTrue(names.isEmpty());
   }
 
+  @Test
+  public void testDescendentOrderIteratorWithMultipleClusters() throws Exception {
+    final OClass personClass = db.getMetadata().getSchema().getClass("Person");
+
+    // empty old cluster but keep it attached
+    personClass.truncate();
+
+    // reload the data in a new 'test' cluster
+    int testClusterId = db.addCluster("test");
+    personClass.addClusterId(testClusterId);
+    personClass.setClusterSelection(new ODefaultClusterSelectionStrategy());
+    personClass.setDefaultClusterId(testClusterId);
+
+    for (String name : names) {
+      createPerson("Person", name);
+    }
+
+    // Use descending class iterator.
+    final ORecordIteratorClass<ODocument> personIter = new ORecordIteratorClassDescendentOrder<ODocument>(db, db, "Person", true);
+
+    personIter.setRange(null, null); // open range
+
+    int docNum = 0;
+    // Explicit iterator loop.
+    while (personIter.hasNext()) {
+      final ODocument personDoc = personIter.next();
+      Assert.assertTrue(names.contains(personDoc.field("First")));
+      Assert.assertTrue(names.remove(personDoc.field("First")));
+      System.out.printf("Doc %d: %s\n", docNum++, personDoc.toString());
+    }
+
+    Assert.assertTrue(names.isEmpty());
+  }
+
+  @Test
+  public void testMultipleClusters() throws Exception {
+    final OClass personClass = db.getMetadata().getSchema().createClass("PersonMultipleClusters", 4, null);
+    for (String name : names) {
+      createPerson("PersonMultipleClusters", name);
+    }
+
+    final ORecordIteratorClass<ODocument> personIter = new ORecordIteratorClass<ODocument>(db, db, "PersonMultipleClusters", true);
+
+    int docNum = 0;
+
+    while (personIter.hasNext()) {
+      final ODocument personDoc = personIter.next();
+      Assert.assertTrue(names.contains(personDoc.field("First")));
+      Assert.assertTrue(names.remove(personDoc.field("First")));
+      System.out.printf("Doc %d: %s\n", docNum++, personDoc.toString());
+    }
+
+    Assert.assertTrue(names.isEmpty());
+  }
+
+
   private static void initializeDatabase() {
     db = new ODatabaseDocumentTx("memory:" + ClassIteratorTest.class.getSimpleName());
     if (db.exists() && RECREATE_DATABASE) {
@@ -112,9 +169,9 @@ public class ClassIteratorTest {
     }
   }
 
-  private static void createPerson(final String first) {
+  private static void createPerson(final String iClassName, final String first) {
     // Create Person document
-    final ODocument personDoc = db.newInstance("Person");
+    final ODocument personDoc = db.newInstance(iClassName);
     personDoc.field("First", first);
     personDoc.save();
   }

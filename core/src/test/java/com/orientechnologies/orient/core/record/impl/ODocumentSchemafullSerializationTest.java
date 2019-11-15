@@ -1,24 +1,9 @@
 package com.orientechnologies.orient.core.record.impl;
 
-import static org.testng.Assert.assertEquals;
-import static org.testng.AssertJUnit.assertNotNull;
-
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
-import org.testng.annotations.AfterMethod;
-import org.testng.annotations.BeforeMethod;
-import org.testng.annotations.Test;
-
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
 import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
-import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
-import com.orientechnologies.orient.core.id.OClusterPositionLong;
 import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.metadata.schema.OSchema;
@@ -26,11 +11,20 @@ import com.orientechnologies.orient.core.metadata.schema.OType;
 import com.orientechnologies.orient.core.serialization.serializer.record.ORecordSerializer;
 import com.orientechnologies.orient.core.serialization.serializer.record.ORecordSerializerFactory;
 import com.orientechnologies.orient.core.serialization.serializer.record.string.ORecordSerializerSchemaAware2CSV;
+import org.testng.annotations.AfterMethod;
+import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.Test;
+
+import java.util.*;
+
+import static org.testng.Assert.assertEquals;
+import static org.testng.AssertJUnit.assertNotNull;
 
 public class ODocumentSchemafullSerializationTest {
 
   private static final String       CITY           = "city";
   private static final String       NUMBER         = "number";
+  private static final String       INT_FIELD      = NUMBER;
   private static final String       NAME           = "name";
   private static final String       MAP_BYTES      = "bytesMap";
   private static final String       MAP_DOUBLE     = "doubleMap";
@@ -52,7 +46,6 @@ public class ODocumentSchemafullSerializationTest {
   private static final String       LIST_STRINGS   = "listStrings";
   private static final String       SHORT_FIELD    = "shortNumber";
   private static final String       LONG_FIELD     = "longNumber";
-  private static final String       INT_FIELD      = NUMBER;
   private static final String       STRING_FIELD   = "stringField";
   private static final String       FLOAT_NUMBER   = "floatNumber";
   private static final String       DOUBLE_NUMBER  = "doubleNumber";
@@ -61,6 +54,7 @@ public class ODocumentSchemafullSerializationTest {
   private static final String       DATE_FIELD     = "dateField";
   private static final String       RECORDID_FIELD = "recordField";
   private static final String       EMBEDDED_FIELD = "embeddedField";
+  private static final String       ANY_FIELD      = "anyField";
   private ODatabaseDocumentInternal databaseDocument;
   private OClass                    simple;
   private ORecordSerializer         serializer;
@@ -99,6 +93,7 @@ public class ODocumentSchemafullSerializationTest {
     simple.createProperty(DATE_FIELD, OType.DATETIME);
     simple.createProperty(RECORDID_FIELD, OType.LINK);
     simple.createProperty(EMBEDDED_FIELD, OType.EMBEDDED, address);
+    simple.createProperty(ANY_FIELD, OType.ANY);
 
     embSimp = schema.createClass("EmbeddedCollectionSimple");
     embSimp.createProperty(LIST_BOOLEANS, OType.EMBEDDEDLIST);
@@ -149,7 +144,7 @@ public class ODocumentSchemafullSerializationTest {
     document.field(BYTE_FIELD, (byte) 'C');
     document.field(BOOLEAN_FIELD, true);
     document.field(DATE_FIELD, new Date());
-    document.field(RECORDID_FIELD, new ORecordId(10, new OClusterPositionLong(10)));
+    document.field(RECORDID_FIELD, new ORecordId(10, 0));
 
     byte[] res = serializer.toStream(document, false);
     ODocument extr = (ODocument) serializer.fromStream(res, new ODocument(), new String[] {});
@@ -332,6 +327,38 @@ public class ODocumentSchemafullSerializationTest {
     assertEquals(emb.field(NAME), embedded.field(NAME));
     assertEquals(emb.field(NUMBER), embedded.field(NUMBER));
     assertEquals(emb.field(CITY), embedded.field(CITY));
+  }
+
+  @Test
+  public void testUpdateBooleanWithPropertyTypeAny() {
+    ODatabaseRecordThreadLocal.INSTANCE.set(databaseDocument);
+    ODocument document = new ODocument(simple);
+    document.field(ANY_FIELD, false);
+
+    byte[] res = serializer.toStream(document, false);
+    ODocument extr = (ODocument) serializer.fromStream(res, new ODocument(), new String[] {});
+    assertEquals(document.fields(), extr.fields());
+    assertEquals(extr.field(ANY_FIELD), false);
+
+    extr.field(ANY_FIELD, false);
+
+    res = serializer.toStream(extr, false);
+    ODocument extr2 = (ODocument) serializer.fromStream(res, new ODocument(), new String[] {});
+    assertEquals(extr.fields(), extr2.fields());
+    assertEquals(extr2.field(ANY_FIELD), false);
+
+  }
+
+  @Test
+  public void simpleTypeKeepingTest() {
+    ODatabaseRecordThreadLocal.INSTANCE.set(databaseDocument);
+    ODocument document = new ODocument();
+    document.field("name", "test");
+
+    byte[] res = serializer.toStream(document, false);
+    ODocument extr = new ODocument().fromStream(res);
+    assertEquals(OType.STRING, extr.fieldType("name"));
+
   }
 
 }

@@ -1,22 +1,22 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.hook;
 
 import com.orientechnologies.orient.core.record.ORecord;
@@ -38,27 +38,27 @@ public abstract class ORecordHookAbstract implements ORecordHook {
   /**
    * It's called just before to create the new iRecord.
    * 
-   * @param iiRecord
+   * @param iRecord
    *          The iRecord to create
    * @return True if the iRecord has been modified and a new marshalling is required, otherwise false
    */
-  public RESULT onRecordBeforeCreate(final ORecord iiRecord) {
+  public RESULT onRecordBeforeCreate(final ORecord iRecord) {
     return RESULT.RECORD_NOT_CHANGED;
   }
 
   /**
    * It's called just after the iRecord is created.
    * 
-   * @param iiRecord
+   * @param iRecord
    *          The iRecord just created
    */
-  public void onRecordAfterCreate(final ORecord iiRecord) {
+  public void onRecordAfterCreate(final ORecord iRecord) {
   }
 
-  public void onRecordCreateFailed(final ORecord iiRecord) {
+  public void onRecordCreateFailed(final ORecord iRecord) {
   }
 
-  public void onRecordCreateReplicated(final ORecord iiRecord) {
+  public void onRecordCreateReplicated(final ORecord iRecord) {
   }
 
   /**
@@ -75,68 +75,68 @@ public abstract class ORecordHookAbstract implements ORecordHook {
   /**
    * It's called just after the iRecord is read.
    * 
-   * @param iiRecord
+   * @param iRecord
    *          The iRecord just read
    */
-  public void onRecordAfterRead(final ORecord iiRecord) {
+  public void onRecordAfterRead(final ORecord iRecord) {
   }
 
-  public void onRecordReadFailed(final ORecord iiRecord) {
+  public void onRecordReadFailed(final ORecord iRecord) {
   }
 
-  public void onRecordReadReplicated(final ORecord iiRecord) {
+  public void onRecordReadReplicated(final ORecord iRecord) {
   }
 
   /**
    * It's called just before to update the iRecord.
    * 
-   * @param iiRecord
+   * @param iRecord
    *          The iRecord to update
    * @return True if the iRecord has been modified and a new marshalling is required, otherwise false
    */
-  public RESULT onRecordBeforeUpdate(final ORecord iiRecord) {
+  public RESULT onRecordBeforeUpdate(final ORecord iRecord) {
     return RESULT.RECORD_NOT_CHANGED;
   }
 
   /**
    * It's called just after the iRecord is updated.
    * 
-   * @param iiRecord
+   * @param iRecord
    *          The iRecord just updated
    */
-  public void onRecordAfterUpdate(final ORecord iiRecord) {
+  public void onRecordAfterUpdate(final ORecord iRecord) {
   }
 
-  public void onRecordUpdateFailed(final ORecord iiRecord) {
+  public void onRecordUpdateFailed(final ORecord iRecord) {
   }
 
-  public void onRecordUpdateReplicated(final ORecord iiRecord) {
+  public void onRecordUpdateReplicated(final ORecord iRecord) {
   }
 
   /**
    * It's called just before to delete the iRecord.
    * 
-   * @param iiRecord
+   * @param iRecord
    *          The iRecord to delete
    * @return True if the iRecord has been modified and a new marshalling is required, otherwise false
    */
-  public RESULT onRecordBeforeDelete(final ORecord iiRecord) {
+  public RESULT onRecordBeforeDelete(final ORecord iRecord) {
     return RESULT.RECORD_NOT_CHANGED;
   }
 
   /**
    * It's called just after the iRecord is deleted.
    * 
-   * @param iiRecord
+   * @param iRecord
    *          The iRecord just deleted
    */
-  public void onRecordAfterDelete(final ORecord iiRecord) {
+  public void onRecordAfterDelete(final ORecord iRecord) {
   }
 
-  public void onRecordDeleteFailed(final ORecord iiRecord) {
+  public void onRecordDeleteFailed(final ORecord iRecord) {
   }
 
-  public void onRecordDeleteReplicated(final ORecord iiRecord) {
+  public void onRecordDeleteReplicated(final ORecord iRecord) {
   }
 
   public RESULT onRecordBeforeReplicaAdd(final ORecord record) {
@@ -169,66 +169,87 @@ public abstract class ORecordHookAbstract implements ORecordHook {
   public void onRecordReplicaDeleteFailed(final ORecord record) {
   }
 
-  public RESULT onTrigger(final TYPE iType, final ORecord iRecord) {
+  public void onRecordFinalizeUpdate(final ORecord record) {
+  }
+
+  public void onRecordFinalizeCreation(final ORecord record) {
+  }
+
+  public void onRecordFinalizeDeletion(final ORecord record) {
+  }
+
+  public RESULT onTrigger(final TYPE iType, final ORecord record) {
     switch (iType) {
     case BEFORE_CREATE:
-      return onRecordBeforeCreate(iRecord);
+      return onRecordBeforeCreate(record);
 
     case AFTER_CREATE:
-      onRecordAfterCreate(iRecord);
+      onRecordAfterCreate(record);
       break;
 
     case CREATE_FAILED:
-      onRecordCreateFailed(iRecord);
+      onRecordCreateFailed(record);
       break;
 
     case CREATE_REPLICATED:
-      onRecordCreateReplicated(iRecord);
+      onRecordCreateReplicated(record);
       break;
 
     case BEFORE_READ:
-      return onRecordBeforeRead(iRecord);
+      return onRecordBeforeRead(record);
 
     case AFTER_READ:
-      onRecordAfterRead(iRecord);
+      onRecordAfterRead(record);
       break;
 
     case READ_FAILED:
-      onRecordReadFailed(iRecord);
+      onRecordReadFailed(record);
       break;
 
     case READ_REPLICATED:
-      onRecordReadReplicated(iRecord);
+      onRecordReadReplicated(record);
       break;
 
     case BEFORE_UPDATE:
-      return onRecordBeforeUpdate(iRecord);
+      return onRecordBeforeUpdate(record);
 
     case AFTER_UPDATE:
-      onRecordAfterUpdate(iRecord);
+      onRecordAfterUpdate(record);
       break;
 
     case UPDATE_FAILED:
-      onRecordUpdateFailed(iRecord);
+      onRecordUpdateFailed(record);
       break;
 
     case UPDATE_REPLICATED:
-      onRecordUpdateReplicated(iRecord);
+      onRecordUpdateReplicated(record);
       break;
 
     case BEFORE_DELETE:
-      return onRecordBeforeDelete(iRecord);
+      return onRecordBeforeDelete(record);
 
     case AFTER_DELETE:
-      onRecordAfterDelete(iRecord);
+      onRecordAfterDelete(record);
       break;
 
     case DELETE_FAILED:
-      onRecordDeleteFailed(iRecord);
+      onRecordDeleteFailed(record);
       break;
 
     case DELETE_REPLICATED:
-      onRecordDeleteReplicated(iRecord);
+      onRecordDeleteReplicated(record);
+      break;
+
+    case FINALIZE_CREATION:
+      onRecordFinalizeCreation(record);
+      break;
+
+    case FINALIZE_UPDATE:
+      onRecordFinalizeUpdate(record);
+      break;
+
+    case FINALIZE_DELETION:
+      onRecordFinalizeDeletion(record);
       break;
 
     }

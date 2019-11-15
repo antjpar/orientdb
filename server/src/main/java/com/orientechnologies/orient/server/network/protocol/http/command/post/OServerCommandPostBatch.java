@@ -1,28 +1,30 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.server.network.protocol.http.command.post;
 
 import com.orientechnologies.common.collection.OMultiValue;
+import com.orientechnologies.common.log.OLogManager;
 import com.orientechnologies.orient.core.command.OCommandManager;
 import com.orientechnologies.orient.core.command.OCommandRequestText;
 import com.orientechnologies.orient.core.command.script.OCommandScript;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.server.network.protocol.http.OHttpRequest;
@@ -85,7 +87,7 @@ public class OServerCommandPostBatch extends OServerCommandDocumentAbstract {
 
     iRequest.data.commandInfo = "Execute multiple requests in one shot";
 
-    ODatabaseDocumentTx db = null;
+    ODatabaseDocument db = null;
 
     ODocument batch = null;
 
@@ -93,6 +95,13 @@ public class OServerCommandPostBatch extends OServerCommandDocumentAbstract {
 
     try {
       db = getProfiledDatabaseInstance(iRequest);
+
+      if (db.getTransaction().isActive()) {
+        // TEMPORARY PATCH TO UNDERSTAND WHY UNDER HIGH LOAD TX IS NOT COMMITTED AFTER BATCH. MAYBE A PENDING TRANSACTION?
+        OLogManager.instance().warn(this,
+            "Found database instance from the pool with a pending transaction. Forcing rollback before using it");
+        db.rollback(true);
+      }
 
       batch = new ODocument().fromJSON(iRequest.content);
 
@@ -104,14 +113,17 @@ public class OServerCommandPostBatch extends OServerCommandDocumentAbstract {
       try {
         operations = batch.field("operations");
       } catch (Exception e) {
-        throw new IllegalArgumentException("Expected 'operations' field as a collection of objects");
+        throw new IllegalArgumentException("Expected 'operations' field as a collection of objects", e);
       }
 
       if (operations == null || operations.isEmpty())
         throw new IllegalArgumentException("Input JSON has no operations to execute");
 
-      if (tx)
+      boolean txBegun = false;
+      if (tx && !db.getTransaction().isActive()) {
         db.begin();
+        txBegun = true;
+      }
 
       // BROWSE ALL THE OPERATIONS
       for (Map<Object, Object> operation : operations) {
@@ -185,11 +197,16 @@ public class OServerCommandPostBatch extends OServerCommandDocumentAbstract {
         }
       }
 
-      if (tx)
+      if (txBegun)
         db.commit();
 
-      iResponse.writeResult(lastResult);
-      iResponse.send(OHttpUtils.STATUS_OK_CODE, OHttpUtils.STATUS_OK_DESCRIPTION, OHttpUtils.CONTENT_TEXT_PLAIN, null, null, true);
+      try {
+        iResponse.writeResult(lastResult);
+      } catch (RuntimeException e) {
+        OLogManager.instance()
+            .error(this, "Error (%s) on serializing result of batch command:\n%s", e, batch.toJSON("prettyPrint"));
+        throw e;
+      }
 
     } finally {
       if (db != null)

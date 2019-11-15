@@ -1,52 +1,56 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.common.concur.resource;
 
 import com.orientechnologies.common.concur.lock.OInterruptedException;
 import com.orientechnologies.common.concur.lock.OLockException;
+import com.orientechnologies.common.exception.OException;
+import com.orientechnologies.common.log.OLogManager;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Queue;
+import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Generic non reentrant implementation about pool of resources. It pre-allocates a semaphore of maxResources. Resources are lazily
  * created by invoking the listener.
- * 
- * @author Luca Garulli (l.garulli--at--orientechnologies.com)
+ *
  * @param <K>
  *          Resource's Key
  * @param <V>
  *          Resource Object
+ * @author Luca Garulli (l.garulli--at--orientechnologies.com)
  */
 public class OResourcePool<K, V> {
   protected final Semaphore             sem;
-  protected final Queue<V>              resources = new ConcurrentLinkedQueue<V>();
+  protected final Queue<V>              resources    = new ConcurrentLinkedQueue<V>();
+  protected final Queue<V>              resourcesOut = new ConcurrentLinkedQueue<V>();
   protected final Collection<V>         unmodifiableresources;
+  private final int                     maxResources;
   protected OResourcePoolListener<K, V> listener;
-  protected volatile int                created     = 0;
+  protected final AtomicInteger         created      = new AtomicInteger();
 
-  public OResourcePool(final int maxResources, final OResourcePoolListener<K, V> listener) {
+  public OResourcePool(final int iMaxResources, final OResourcePoolListener<K, V> listener) {
+    maxResources = iMaxResources;
     if (maxResources < 1)
       throw new IllegalArgumentException("iMaxResource must be major than 0");
 
@@ -59,10 +63,10 @@ public class OResourcePool<K, V> {
     // First, get permission to take or create a resource
     try {
       if (!sem.tryAcquire(maxWaitMillis, TimeUnit.MILLISECONDS))
-        throw new OLockException("No more resources available in pool. Requested resource: " + key);
+        throw new OLockException("No more resources available in pool (max=" + maxResources + "). Requested resource: " + key);
+
     } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      throw new OInterruptedException(e);
+      throw new OInterruptedException("Acquiring of resources was interrupted");
     }
 
     V res;
@@ -85,9 +89,15 @@ public class OResourcePool<K, V> {
     try {
       if (res == null) {
         res = listener.createNewResource(key, additionalArgs);
-        created++;
+        created.incrementAndGet();
+        if (OLogManager.instance().isDebugEnabled())
+          OLogManager.instance().debug(this, "pool:'%s' created new resource '%s', new resource count '%d'", this, res,
+              created.get());
       }
-
+      resourcesOut.add(res);
+      if (OLogManager.instance().isDebugEnabled())
+        OLogManager.instance().debug(this, "pool:'%s' acquired resource '%s' available %d out %d ", this, res,
+            sem.availablePermits(), resourcesOut.size());
       return res;
     } catch (RuntimeException e) {
       sem.release();
@@ -96,21 +106,30 @@ public class OResourcePool<K, V> {
     } catch (Exception e) {
       sem.release();
 
-      throw new OLockException("Error on creation of the new resource in the pool", e);
+      throw OException.wrapException(new OLockException("Error on creation of the new resource in the pool"), e);
     }
   }
 
   public int getMaxResources() {
-    return sem.availablePermits();
+    return maxResources;
   }
 
   public int getAvailableResources() {
+    return sem.availablePermits();
+  }
+
+  public int getInPoolResources() {
     return resources.size();
   }
 
   public boolean returnResource(final V res) {
-    resources.add(res);
-    sem.release();
+    if (resourcesOut.remove(res)) {
+      resources.add(res);
+      sem.release();
+      if (OLogManager.instance().isDebugEnabled())
+        OLogManager.instance().debug(this, "pool:'%s' returned resource '%s' available %d out %d", this, res,
+            sem.availablePermits(), resourcesOut.size());
+    }
     return true;
   }
 
@@ -122,12 +141,23 @@ public class OResourcePool<K, V> {
     sem.drainPermits();
   }
 
-  public void remove(final V res) {
-    this.resources.remove(res);
-    sem.release();
+  public Collection<V> getAllResources() {
+    List<V> all = new ArrayList<V>(resources);
+    all.addAll(resourcesOut);
+    return all;
   }
 
-  public int getCreatedInstancesInPool() {
-    return created;
+  public void remove(final V res) {
+    if (resourcesOut.remove(res)) {
+      this.resources.remove(res);
+      sem.release();
+      if (OLogManager.instance().isDebugEnabled())
+        OLogManager.instance().debug(this, "pool:'%s' removed resource '%s' available %d out %d", this, res,
+            sem.availablePermits(), resourcesOut.size());
+    }
+  }
+
+  public int getCreatedInstances() {
+    return created.get();
   }
 }

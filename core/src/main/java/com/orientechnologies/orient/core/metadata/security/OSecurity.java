@@ -1,29 +1,30 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.metadata.security;
-
-import com.orientechnologies.orient.core.db.record.OIdentifiable;
-import com.orientechnologies.orient.core.record.impl.ODocument;
 
 import java.util.List;
 import java.util.Set;
+
+import com.orientechnologies.orient.core.db.record.OIdentifiable;
+import com.orientechnologies.orient.core.id.ORID;
+import com.orientechnologies.orient.core.record.impl.ODocument;
 
 /**
  * Manages users and roles.
@@ -32,53 +33,169 @@ import java.util.Set;
  * 
  */
 public interface OSecurity {
-  public OUser create();
+  static final String RESTRICTED_CLASSNAME   = "ORestricted";
+  @Deprecated
+  static final String IDENTITY_CLASSNAME     = OIdentity.CLASS_NAME;
+  static final String ALLOW_ALL_FIELD        = "_allow";
+  static final String ALLOW_READ_FIELD       = "_allowRead";
+  static final String ALLOW_UPDATE_FIELD     = "_allowUpdate";
+  static final String ALLOW_DELETE_FIELD     = "_allowDelete";
+  static final String ONCREATE_IDENTITY_TYPE = "onCreate.identityType";
+  static final String ONCREATE_FIELD         = "onCreate.fields";
 
-  public void load();
+  OUser create();
 
-  public boolean isAllowed(final Set<OIdentifiable> iAllowAll, final Set<OIdentifiable> iAllowOperation);
+  void load();
 
-  public OIdentifiable allowUser(final ODocument iDocument, final String iAllowFieldName, final String iUserName);
+  boolean isAllowed(final Set<OIdentifiable> iAllowAll, final Set<OIdentifiable> iAllowOperation);
 
-  public OIdentifiable allowRole(final ODocument iDocument, final String iAllowFieldName, final String iRoleName);
+  /**
+   * Record level security: allows a user to access to a record.
+   * 
+   * @param iDocument
+   *          ODocument instance to give access
+   * @param iOperationType
+   *          Operation type to use based on the permission to allow:
+   *          <ul>
+   *          <li>ALLOW_ALL, to provide full access (RUD)</li>
+   *          <li>ALLOW_READ, to provide read access</li>
+   *          <li>ALLOW_UPDATE, to provide update access</li>
+   *          <li>ALLOW_DELETE, to provide delete access</li>
+   *          </ul>
+   * @param iUserName
+   *          User name to provide the access
+   * @return The OIdentity instance allowed
+   */
+  OIdentifiable allowUser(final ODocument iDocument, final ORestrictedOperation iOperationType, final String iUserName);
 
-  public OIdentifiable allowIdentity(final ODocument iDocument, final String iAllowFieldName, final OIdentifiable iId);
+  /**
+   * Record level security: allows a role to access to a record.
+   *
+   * @param iDocument
+   *          ODocument instance to give access
+   * @param iOperationType
+   *          Operation type to use based on the permission to allow:
+   *          <ul>
+   *          <li>ALLOW_ALL, to provide full access (RUD)</li>
+   *          <li>ALLOW_READ, to provide read access</li>
+   *          <li>ALLOW_UPDATE, to provide update access</li>
+   *          <li>ALLOW_DELETE, to provide delete access</li>
+   *          </ul>
+   * @param iRoleName
+   *          Role name to provide the access
+   * @return The OIdentity instance allowed
+   */
+  OIdentifiable allowRole(final ODocument iDocument, final ORestrictedOperation iOperationType, final String iRoleName);
 
-  public OIdentifiable disallowUser(final ODocument iDocument, final String iAllowFieldName, final String iUserName);
+  /**
+   * Record level security: deny a user to access to a record.
+   *
+   * @param iDocument
+   *          ODocument instance to give access
+   * @param iOperationType
+   *          Operation type to use based on the permission to deny:
+   *          <ul>
+   *          <li>ALLOW_ALL, to provide full access (RUD)</li>
+   *          <li>ALLOW_READ, to provide read access</li>
+   *          <li>ALLOW_UPDATE, to provide update access</li>
+   *          <li>ALLOW_DELETE, to provide delete access</li>
+   *          </ul>
+   * @param iUserName
+   *          User name to deny the access
+   * @return The OIdentity instance denied
+   */
+  OIdentifiable denyUser(final ODocument iDocument, final ORestrictedOperation iOperationType, final String iUserName);
 
-  public OIdentifiable disallowRole(final ODocument iDocument, final String iAllowFieldName, final String iRoleName);
+  /**
+   * Record level security: deny a role to access to a record.
+   *
+   * @param iDocument
+   *          ODocument instance to give access
+   * @param iOperationType
+   *          Operation type to use based on the permission to deny:
+   *          <ul>
+   *          <li>ALLOW_ALL, to provide full access (RUD)</li>
+   *          <li>ALLOW_READ, to provide read access</li>
+   *          <li>ALLOW_UPDATE, to provide update access</li>
+   *          <li>ALLOW_DELETE, to provide delete access</li>
+   *          </ul>
+   * @param iRoleName
+   *          Role name to deny the access
+   * @return The OIdentity instance denied
+   */
+  OIdentifiable denyRole(final ODocument iDocument, final ORestrictedOperation iOperationType, final String iRoleName);
 
-  public OIdentifiable disallowIdentity(final ODocument iDocument, final String iAllowFieldName, final OIdentifiable iId);
+  /**
+   * Uses the version with ENUM instead.
+   */
+  @Deprecated
+  OIdentifiable allowUser(final ODocument iDocument, final String iAllowFieldName, final String iUserName);
 
-  public OUser authenticate(String iUsername, String iUserPassword);
+  /**
+   * Uses the version with ENUM instead.
+   */
+  @Deprecated
+  OIdentifiable allowRole(final ODocument iDocument, final String iAllowFieldName, final String iRoleName);
 
-  public OUser getUser(String iUserName);
+  /**
+   * Uses the version with ENUM instead.
+   */
+  @Deprecated
+  OIdentifiable allowIdentity(final ODocument iDocument, final String iAllowFieldName, final OIdentifiable iId);
 
-  public OUser createUser(String iUserName, String iUserPassword, String... iRoles);
+  /**
+   * Uses the version with ENUM instead.
+   */
+  @Deprecated
+  OIdentifiable disallowUser(final ODocument iDocument, final String iAllowFieldName, final String iUserName);
 
-  public OUser createUser(String iUserName, String iUserPassword, ORole... iRoles);
+  /**
+   * Uses the version with ENUM instead.
+   */
+  @Deprecated
+  OIdentifiable disallowRole(final ODocument iDocument, final String iAllowFieldName, final String iRoleName);
 
-  public boolean dropUser(String iUserName);
+  /**
+   * Uses the version with ENUM instead.
+   */
+  @Deprecated
+  OIdentifiable disallowIdentity(final ODocument iDocument, final String iAllowFieldName, final OIdentifiable iId);
 
-  public ORole getRole(String iRoleName);
+  OUser authenticate(String iUsername, String iUserPassword);
 
-  public ORole getRole(OIdentifiable role);
+  OUser authenticate(final OToken authToken);
 
-  public ORole createRole(String iRoleName, ORole.ALLOW_MODES iAllowMode);
+  OUser getUser(String iUserName);
 
-  public ORole createRole(String iRoleName, ORole iParent, ORole.ALLOW_MODES iAllowMode);
+  OUser getUser(final ORID iUserId);
 
-  public boolean dropRole(String iRoleName);
+  OUser createUser(String iUserName, String iUserPassword, String... iRoles);
 
-  public List<ODocument> getAllUsers();
+  OUser createUser(String iUserName, String iUserPassword, ORole... iRoles);
 
-  public List<ODocument> getAllRoles();
+  boolean dropUser(String iUserName);
 
-  public OUser repair();
+  ORole getRole(String iRoleName);
 
-  public void close(boolean onDelete);
+  ORole getRole(OIdentifiable role);
 
-  public void createClassTrigger();
+  ORole createRole(String iRoleName, ORole.ALLOW_MODES iAllowMode);
 
-  public OSecurity getUnderlying();
+  ORole createRole(String iRoleName, ORole iParent, ORole.ALLOW_MODES iAllowMode);
+
+  boolean dropRole(String iRoleName);
+
+  List<ODocument> getAllUsers();
+
+  List<ODocument> getAllRoles();
+
+  void close(boolean onDelete);
+
+  void createClassTrigger();
+
+  OSecurity getUnderlying();
+
+  long getVersion();
+
+  void incrementVersion();
 }

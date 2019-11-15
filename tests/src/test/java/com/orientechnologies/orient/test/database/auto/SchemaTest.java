@@ -15,20 +15,24 @@
  */
 package com.orientechnologies.orient.test.database.auto;
 
-import com.orientechnologies.orient.client.db.ODatabaseHelper;
+import com.orientechnologies.common.exception.OException;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+import com.orientechnologies.orient.core.db.record.OIdentifiable;
+import com.orientechnologies.orient.core.exception.OCommandExecutionException;
+import com.orientechnologies.orient.core.exception.ORecordNotFoundException;
 import com.orientechnologies.orient.core.exception.OSchemaException;
 import com.orientechnologies.orient.core.exception.OValidationException;
+import com.orientechnologies.orient.core.metadata.OMetadataInternal;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.metadata.schema.OSchema;
 import com.orientechnologies.orient.core.metadata.schema.OType;
+import com.orientechnologies.orient.core.metadata.security.OSecurityShared;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.sql.OCommandSQL;
 import com.orientechnologies.orient.core.sql.OCommandSQLParsingException;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
-import com.orientechnologies.orient.core.storage.OStorage;
-import com.orientechnologies.orient.enterprise.channel.binary.OResponseProcessingException;
+import com.orientechnologies.orient.core.storage.impl.local.paginated.OOfflineClusterException;
 import org.testng.Assert;
 import org.testng.annotations.Optional;
 import org.testng.annotations.Parameters;
@@ -36,6 +40,8 @@ import org.testng.annotations.Test;
 
 import java.io.IOException;
 import java.util.List;
+
+import static org.testng.Assert.assertEquals;
 
 @Test(groups = "schema")
 public class SchemaTest extends DocumentDBBaseTest {
@@ -45,26 +51,15 @@ public class SchemaTest extends DocumentDBBaseTest {
   }
 
   public void createSchema() throws IOException {
-    database = new ODatabaseDocumentTx(url);
-    if (ODatabaseHelper.existsDatabase(database, "plocal"))
-      database.open("admin", "admin");
-    else
-      database.create();
 
     if (database.getMetadata().getSchema().existsClass("Account"))
       return;
 
-    Assert.assertNotNull(database.getMetadata().getSchema().getClass("ORIDs"));
-
     createBasicTestSchema();
-
-    database.close();
   }
 
   @Test(dependsOnMethods = "createSchema")
   public void checkSchema() {
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
 
     OSchema schema = database.getMetadata().getSchema();
 
@@ -87,13 +82,65 @@ public class SchemaTest extends DocumentDBBaseTest {
     assert schema.getClass("whiz").getProperty("replyTo").getType() == OType.LINK;
     assert schema.getClass("Whiz").getProperty("replyTo").getLinkedClass().getName().equalsIgnoreCase("Account");
 
-    database.close();
+  }
+
+  @Test(dependsOnMethods = "checkSchema")
+  public void checkInvalidNames() {
+
+    OSchema schema = database.getMetadata().getSchema();
+
+    try {
+      schema.createClass("TestInvalidName:");
+      Assert.assertTrue(false);
+    } catch (OSchemaException e) {
+    }
+
+    try {
+      schema.createClass("TestInvalidName,");
+      Assert.assertTrue(false);
+    } catch (OSchemaException e) {
+    }
+
+    try {
+      schema.createClass("TestInvalidName;");
+      Assert.assertTrue(false);
+    } catch (OSchemaException e) {
+    }
+
+    try {
+      schema.createClass("TestInvalid Name");
+      Assert.assertTrue(false);
+    } catch (OSchemaException e) {
+    }
+
+    try {
+      schema.createClass("TestInvalid%Name:");
+      Assert.assertTrue(false);
+    } catch (OSchemaException e) {
+    }
+
+    try {
+      schema.createClass("TestInvalid@Name:");
+      Assert.assertTrue(false);
+    } catch (OSchemaException e) {
+    }
+
+    try {
+      schema.createClass("TestInvalid=Name:");
+      Assert.assertTrue(false);
+    } catch (OSchemaException e) {
+    }
+
+    try {
+      schema.createClass("TestInvalid.Name");
+      Assert.assertTrue(false);
+    } catch (OSchemaException e) {
+    }
+
   }
 
   @Test(dependsOnMethods = "checkSchema")
   public void checkSchemaApi() {
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
 
     OSchema schema = database.getMetadata().getSchema();
 
@@ -102,56 +149,41 @@ public class SchemaTest extends DocumentDBBaseTest {
     } catch (OSchemaException e) {
     }
 
-    database.close();
   }
 
   @Test(dependsOnMethods = "checkSchemaApi")
   public void checkClusters() {
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
 
     for (OClass cls : database.getMetadata().getSchema().getClasses()) {
       if (!cls.isAbstract())
         assert database.getClusterNameById(cls.getDefaultClusterId()) != null;
     }
 
-    database.close();
   }
 
   @Test(dependsOnMethods = "createSchema")
   public void checkDatabaseSize() {
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
 
     Assert.assertTrue(database.getSize() > 0);
 
-    database.close();
   }
 
   @Test(dependsOnMethods = "createSchema")
   public void checkTotalRecords() {
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
 
     Assert.assertTrue(database.getStorage().countRecords() > 0);
 
-    database.close();
   }
 
   @Test(expectedExceptions = OValidationException.class)
   public void checkErrorOnUserNoPasswd() {
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
 
     database.getMetadata().getSecurity().createUser("error", null, (String) null);
 
-    database.close();
   }
 
   @Test
   public void testMultiThreadSchemaCreation() throws InterruptedException {
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
 
     Thread thread = new Thread(new Runnable() {
 
@@ -164,7 +196,6 @@ public class SchemaTest extends DocumentDBBaseTest {
         doc.delete();
         database.getMetadata().getSchema().dropClass("NewClass");
 
-        database.close();
       }
     });
 
@@ -174,8 +205,7 @@ public class SchemaTest extends DocumentDBBaseTest {
 
   @Test
   public void createAndDropClassTestApi() {
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
+
     final String testClassName = "dropTestClass";
     final int clusterId;
     OClass dropTestClass = database.getMetadata().getSchema().createClass(testClassName);
@@ -183,36 +213,30 @@ public class SchemaTest extends DocumentDBBaseTest {
     database.getMetadata().getSchema().reload();
     dropTestClass = database.getMetadata().getSchema().getClass(testClassName);
     Assert.assertNotNull(dropTestClass);
-    Assert.assertEquals(database.getStorage().getClusterIdByName(testClassName), clusterId);
+    assertEquals(database.getStorage().getClusterIdByName(testClassName), clusterId);
     Assert.assertNotNull(database.getClusterNameById(clusterId));
-    database.close();
-    database = null;
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
+
     dropTestClass = database.getMetadata().getSchema().getClass(testClassName);
     Assert.assertNotNull(dropTestClass);
-    Assert.assertEquals(database.getStorage().getClusterIdByName(testClassName), clusterId);
+    assertEquals(database.getStorage().getClusterIdByName(testClassName), clusterId);
     Assert.assertNotNull(database.getClusterNameById(clusterId));
     database.getMetadata().getSchema().dropClass(testClassName);
     database.getMetadata().getSchema().reload();
     dropTestClass = database.getMetadata().getSchema().getClass(testClassName);
     Assert.assertNull(dropTestClass);
-    Assert.assertEquals(database.getStorage().getClusterIdByName(testClassName), -1);
+    assertEquals(database.getStorage().getClusterIdByName(testClassName), -1);
     Assert.assertNull(database.getClusterNameById(clusterId));
-    database.close();
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
+
     dropTestClass = database.getMetadata().getSchema().getClass(testClassName);
     Assert.assertNull(dropTestClass);
-    Assert.assertEquals(database.getStorage().getClusterIdByName(testClassName), -1);
+    assertEquals(database.getStorage().getClusterIdByName(testClassName), -1);
     Assert.assertNull(database.getClusterNameById(clusterId));
-    database.close();
+
   }
 
   @Test
   public void createAndDropClassTestCommand() {
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
+
     final String testClassName = "dropTestClass";
     final int clusterId;
     OClass dropTestClass = database.getMetadata().getSchema().createClass(testClassName);
@@ -220,104 +244,86 @@ public class SchemaTest extends DocumentDBBaseTest {
     database.getMetadata().getSchema().reload();
     dropTestClass = database.getMetadata().getSchema().getClass(testClassName);
     Assert.assertNotNull(dropTestClass);
-    Assert.assertEquals(database.getStorage().getClusterIdByName(testClassName), clusterId);
+    assertEquals(database.getStorage().getClusterIdByName(testClassName), clusterId);
     Assert.assertNotNull(database.getClusterNameById(clusterId));
-    database.close();
-    database = null;
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
+
     dropTestClass = database.getMetadata().getSchema().getClass(testClassName);
     Assert.assertNotNull(dropTestClass);
-    Assert.assertEquals(database.getStorage().getClusterIdByName(testClassName), clusterId);
+    assertEquals(database.getStorage().getClusterIdByName(testClassName), clusterId);
     Assert.assertNotNull(database.getClusterNameById(clusterId));
     database.command(new OCommandSQL("drop class " + testClassName)).execute();
     database.reload();
     dropTestClass = database.getMetadata().getSchema().getClass(testClassName);
     Assert.assertNull(dropTestClass);
-    Assert.assertEquals(database.getStorage().getClusterIdByName(testClassName), -1);
+    assertEquals(database.getStorage().getClusterIdByName(testClassName), -1);
     Assert.assertNull(database.getClusterNameById(clusterId));
-    database.close();
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
+
     dropTestClass = database.getMetadata().getSchema().getClass(testClassName);
     Assert.assertNull(dropTestClass);
-    Assert.assertEquals(database.getStorage().getClusterIdByName(testClassName), -1);
+    assertEquals(database.getStorage().getClusterIdByName(testClassName), -1);
     Assert.assertNull(database.getClusterNameById(clusterId));
-    database.close();
+
   }
 
   @Test(dependsOnMethods = "createSchema")
   public void customAttributes() {
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
 
     // TEST CUSTOM PROPERTY CREATION
     database.getMetadata().getSchema().getClass("Profile").getProperty("nick").setCustom("stereotype", "icon");
 
-    Assert.assertEquals(database.getMetadata().getSchema().getClass("Profile").getProperty("nick").getCustom("stereotype"), "icon");
+    assertEquals(database.getMetadata().getSchema().getClass("Profile").getProperty("nick").getCustom("stereotype"), "icon");
 
     // TEST CUSTOM PROPERTY EXISTS EVEN AFTER REOPEN
-    database.close();
-    database.open("admin", "admin");
 
-    Assert.assertEquals(database.getMetadata().getSchema().getClass("Profile").getProperty("nick").getCustom("stereotype"), "icon");
+    assertEquals(database.getMetadata().getSchema().getClass("Profile").getProperty("nick").getCustom("stereotype"), "icon");
 
     // TEST CUSTOM PROPERTY REMOVAL
     database.getMetadata().getSchema().getClass("Profile").getProperty("nick").setCustom("stereotype", null);
-    Assert.assertEquals(database.getMetadata().getSchema().getClass("Profile").getProperty("nick").getCustom("stereotype"), null);
+    assertEquals(database.getMetadata().getSchema().getClass("Profile").getProperty("nick").getCustom("stereotype"), null);
 
     // TEST CUSTOM PROPERTY UPDATE
     database.getMetadata().getSchema().getClass("Profile").getProperty("nick").setCustom("stereotype", "polygon");
-    Assert.assertEquals(database.getMetadata().getSchema().getClass("Profile").getProperty("nick").getCustom("stereotype"),
+    assertEquals(database.getMetadata().getSchema().getClass("Profile").getProperty("nick").getCustom("stereotype"),
         "polygon");
 
     // TEST CUSTOM PROPERTY UDPATED EVEN AFTER REOPEN
-    database.close();
-    database.open("admin", "admin");
 
-    Assert.assertEquals(database.getMetadata().getSchema().getClass("Profile").getProperty("nick").getCustom("stereotype"),
+    assertEquals(database.getMetadata().getSchema().getClass("Profile").getProperty("nick").getCustom("stereotype"),
         "polygon");
 
-    database.close();
     // TEST CUSTOM PROPERTY WITH =
-    database.open("admin", "admin");
 
     database.getMetadata().getSchema().getClass("Profile").getProperty("nick").setCustom("equal", "this = that");
 
-    Assert.assertEquals(database.getMetadata().getSchema().getClass("Profile").getProperty("nick").getCustom("equal"),
+    assertEquals(database.getMetadata().getSchema().getClass("Profile").getProperty("nick").getCustom("equal"),
         "this = that");
 
-    database.close();
     // TEST CUSTOM PROPERTY WITH = AFTER REOPEN
-    database.open("admin", "admin");
 
-    Assert.assertEquals(database.getMetadata().getSchema().getClass("Profile").getProperty("nick").getCustom("equal"),
+    assertEquals(database.getMetadata().getSchema().getClass("Profile").getProperty("nick").getCustom("equal"),
         "this = that");
 
-    database.close();
   }
 
   @Test(dependsOnMethods = "createSchema")
   public void alterAttributes() {
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
 
     OClass company = database.getMetadata().getSchema().getClass("Company");
     OClass superClass = company.getSuperClass();
 
     Assert.assertNotNull(superClass);
     boolean found = false;
-    for (OClass c : superClass.getBaseClasses()) {
+    for (OClass c : superClass.getSubclasses()) {
       if (c.equals(company)) {
         found = true;
         break;
       }
     }
-    Assert.assertEquals(found, true);
+    assertEquals(found, true);
 
     company.setSuperClass(null);
     Assert.assertNull(company.getSuperClass());
-    for (OClass c : superClass.getBaseClasses()) {
+    for (OClass c : superClass.getSubclasses()) {
       Assert.assertNotSame(c, company);
     }
 
@@ -329,75 +335,61 @@ public class SchemaTest extends DocumentDBBaseTest {
 
     Assert.assertNotNull(company.getSuperClass());
     found = false;
-    for (OClass c : superClass.getBaseClasses()) {
+    for (OClass c : superClass.getSubclasses()) {
       if (c.equals(company)) {
         found = true;
         break;
       }
     }
-    Assert.assertEquals(found, true);
-
-    database.close();
+    assertEquals(found, true);
 
   }
 
   @Test
   public void invalidClusterWrongClusterId() {
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
+
     try {
       database.command(new OCommandSQL("create class Antani cluster 212121")).execute();
       Assert.fail();
     } catch (Exception e) {
-      if (e instanceof OResponseProcessingException)
-        e = (Exception) e.getCause();
       Assert.assertTrue(e instanceof OCommandSQLParsingException);
-    } finally {
-      database.close();
     }
   }
 
   @Test
   public void invalidClusterWrongClusterName() {
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
 
     try {
       database.command(new OCommandSQL("create class Antani cluster blaaa")).execute();
       Assert.fail();
 
     } catch (Exception e) {
-      if (e instanceof OResponseProcessingException)
-        e = (Exception) e.getCause();
       Assert.assertTrue(e instanceof OCommandSQLParsingException);
-    } finally {
-      database.close();
     }
   }
 
   @Test
   public void invalidClusterWrongKeywords() {
-    database = new ODatabaseDocumentTx(url);
-    database.open("admin", "admin");
 
     try {
       database.command(new OCommandSQL("create class Antani the pen is on the table")).execute();
       Assert.fail();
     } catch (Exception e) {
-      if (e instanceof OResponseProcessingException)
-        e = (Exception) e.getCause();
       Assert.assertTrue(e instanceof OCommandSQLParsingException);
-    } finally {
-      database.close();
     }
   }
 
   @Test
-  public void testRenameClass() {
-    ODatabaseDocumentTx databaseDocumentTx = new ODatabaseDocumentTx(url);
-    databaseDocumentTx.open("admin", "admin");
+  public void testSetDescription(){
+    OClass oClass = database.getMetadata().getSchema().createClass("SetDescription");
+    oClass.setDescription("Some Desc");
+    assertEquals(oClass.getDescription(),"Some Desc");
+  }
 
-    OClass oClass = databaseDocumentTx.getMetadata().getSchema().createClass("RenameClassTest");
+  @Test
+  public void testRenameClass() {
+
+    OClass oClass = database.getMetadata().getSchema().createClass("RenameClassTest");
 
     ODocument document = new ODocument("RenameClassTest");
     document.save();
@@ -407,33 +399,31 @@ public class SchemaTest extends DocumentDBBaseTest {
     document.setClassName("RenameClassTest");
     document.save();
 
-    List<ODocument> result = databaseDocumentTx.query(new OSQLSynchQuery<ODocument>("select from RenameClassTest"));
-    Assert.assertEquals(result.size(), 2);
+    List<ODocument> result = database.query(new OSQLSynchQuery<ODocument>("select from RenameClassTest"));
+    assertEquals(result.size(), 2);
 
     oClass.set(OClass.ATTRIBUTES.NAME, "RenameClassTest2");
 
-    result = databaseDocumentTx.query(new OSQLSynchQuery<ODocument>("select from RenameClassTest2"));
-    Assert.assertEquals(result.size(), 2);
+    database.getLocalCache().clear();
+
+    result = database.query(new OSQLSynchQuery<ODocument>("select from RenameClassTest2"));
+    assertEquals(result.size(), 2);
+
   }
 
   public void testMinimumClustersAndClusterSelection() {
-    ODatabaseDocumentTx databaseDocumentTx = new ODatabaseDocumentTx(url);
-    databaseDocumentTx.open("admin", "admin");
 
-    databaseDocumentTx.command(new OCommandSQL("alter database minimumclusters 3")).execute();
+    database.command(new OCommandSQL("alter database minimumclusters 3")).execute();
 
     try {
-      databaseDocumentTx.command(new OCommandSQL("create class multipleclusters")).execute();
+      database.command(new OCommandSQL("create class multipleclusters")).execute();
 
-      databaseDocumentTx.close();
+      database.reload();
 
-      databaseDocumentTx.open("admin", "admin");
-      databaseDocumentTx.reload();
+      Assert.assertTrue(database.existsCluster("multipleclusters"));
 
-      Assert.assertFalse(databaseDocumentTx.existsCluster("multipleclusters"));
-
-      for (int i = 0; i < 3; ++i) {
-        Assert.assertTrue(databaseDocumentTx.existsCluster("multipleclusters_" + i));
+      for (int i = 1; i < 3; ++i) {
+        Assert.assertTrue(database.existsCluster("multipleclusters_" + i));
       }
 
       for (int i = 0; i < 6; ++i) {
@@ -441,45 +431,222 @@ public class SchemaTest extends DocumentDBBaseTest {
       }
 
       // CHECK THERE ARE 2 RECORDS IN EACH CLUSTER (ROUND-ROBIN STRATEGY)
-      for (int i = 0; i < 3; ++i) {
-        Assert.assertEquals(
-            databaseDocumentTx.countClusterElements(databaseDocumentTx.getClusterIdByName("multipleclusters_" + i)), 2);
+      assertEquals(database.countClusterElements(database.getClusterIdByName("multipleclusters")), 2);
+      for (int i = 1; i < 3; ++i) {
+        assertEquals(database.countClusterElements(database.getClusterIdByName("multipleclusters_" + i)), 2);
       }
 
       // DELETE ALL THE RECORDS
-      int deleted = databaseDocumentTx.command(new OCommandSQL("delete from cluster:multipleclusters_2")).execute();
-      Assert.assertEquals(deleted, 2);
+      int deleted = database.command(new OCommandSQL("delete from cluster:multipleclusters_2")).execute();
+      assertEquals(deleted, 2);
 
       // CHANGE CLASS STRATEGY to BALANCED
-      databaseDocumentTx.command(new OCommandSQL("alter class multipleclusters clusterselection balanced")).execute();
-      databaseDocumentTx.reload();
-      databaseDocumentTx.getMetadata().getSchema().reload();
+      database.command(new OCommandSQL("alter class multipleclusters clusterselection balanced")).execute();
+      database.reload();
+      database.getMetadata().getSchema().reload();
 
       for (int i = 0; i < 2; ++i) {
         new ODocument("multipleclusters").field("num", i).save();
       }
 
-      Assert.assertEquals(databaseDocumentTx.countClusterElements(databaseDocumentTx.getClusterIdByName("multipleclusters_2")), 2);
+      assertEquals(database.countClusterElements(database.getClusterIdByName("multipleclusters_2")), 2);
 
     } finally {
       // RESTORE DEFAULT
-      databaseDocumentTx.command(new OCommandSQL("alter database minimumclusters 1")).execute();
+      database.command(new OCommandSQL("alter database minimumclusters 0")).execute();
+
     }
   }
 
   public void testExchangeCluster() {
-    ODatabaseDocumentTx databaseDocumentTx = new ODatabaseDocumentTx(url);
-    databaseDocumentTx.open("admin", "admin");
 
     try {
-      databaseDocumentTx.command(new OCommandSQL("CREATE CLASS TestRenameClusterOriginal")).execute();
+      database.command(new OCommandSQL("CREATE CLASS TestRenameClusterOriginal")).execute();
 
-      swapClusters(databaseDocumentTx, 1);
-      swapClusters(databaseDocumentTx, 2);
-      swapClusters(databaseDocumentTx, 3);
+      swapClusters(database, 1);
+      swapClusters(database, 2);
+      swapClusters(database, 3);
     } finally {
-      databaseDocumentTx.close();
+
     }
+  }
+
+  public void testOfflineCluster() {
+    database.command(new OCommandSQL("create class TestOffline")).execute();
+    database.command(new OCommandSQL("insert into TestOffline set status = 'offline'")).execute();
+
+    List<OIdentifiable> result = database.command(new OCommandSQL("select from TestOffline")).execute();
+    Assert.assertNotNull(result);
+    Assert.assertFalse(result.isEmpty());
+
+    ODocument record = result.get(0).getRecord();
+
+    // TEST NO EFFECTS
+    Boolean changed = database.command(new OCommandSQL("alter cluster TestOffline status online")).execute();
+    Assert.assertFalse(changed);
+
+    // PUT IT OFFLINE
+    changed = database.command(new OCommandSQL("alter cluster TestOffline* status offline")).execute();
+    Assert.assertTrue(changed);
+
+    // NO DATA?
+    result = database.command(new OCommandSQL("select from TestOffline")).execute();
+    Assert.assertNotNull(result);
+    Assert.assertTrue(result.isEmpty());
+
+    // TEST NO EFFECTS
+    changed = database.command(new OCommandSQL("alter cluster TestOffline* status offline")).execute();
+    Assert.assertFalse(changed);
+
+    // TEST SAVING OF OFFLINE STATUS
+
+    // TEST UPDATE - NO EFFECT
+    assertEquals(database.command(new OCommandSQL("update TestOffline set name = 'yeah'")).execute(), 0);
+
+    // TEST DELETE - NO EFFECT
+    assertEquals(database.command(new OCommandSQL("delete from TestOffline")).execute(), 0);
+
+    // TEST CREATE -> EXCEPTION
+    try {
+      Object res = database
+          .command(new OCommandSQL("insert into TestOffline set name = 'offline', password = 'offline', status = 'ACTIVE'"))
+          .execute();
+      Assert.assertTrue(false);
+    } catch (OException e) {
+
+      Throwable cause = e;
+      while (cause.getCause() != null)
+        cause = cause.getCause();
+
+      Assert.assertTrue(cause instanceof OOfflineClusterException);
+    }
+
+    // TEST UPDATE RECORD -> EXCEPTION
+    try {
+      record.field("status", "offline").save();
+      Assert.assertTrue(false);
+    } catch (OException e) {
+      Throwable cause = e;
+      while (cause.getCause() != null)
+        cause = cause.getCause();
+
+      Assert.assertTrue(cause instanceof OOfflineClusterException);
+    }
+
+    // TEST DELETE RECORD -> EXCEPTION
+    try {
+      record.delete();
+      Assert.assertTrue(false);
+    } catch (OOfflineClusterException e) {
+      Assert.assertTrue(true);
+    }
+
+    // TEST DELETE RECORD -> EXCEPTION
+    try {
+      record.reload(null, true);
+      Assert.assertTrue(false);
+    } catch (ORecordNotFoundException e) {
+      Assert.assertTrue(e.getCause() instanceof OOfflineClusterException);
+    }
+
+    // RESTORE IT ONLINE
+    changed = database.command(new OCommandSQL("alter cluster TestOffline status online")).execute();
+    Assert.assertTrue(changed);
+
+    result = database.command(new OCommandSQL("select from TestOffline")).execute();
+    Assert.assertNotNull(result);
+    Assert.assertFalse(result.isEmpty());
+
+  }
+
+  public void testExistsProperty() {
+    OSchema schema = database.getMetadata().getSchema();
+    OClass classA = schema.createClass("TestExistsA");
+    classA.createProperty("property", OType.STRING);
+    Assert.assertTrue(classA.existsProperty("property"));
+    Assert.assertNotNull(classA.getProperty("property"));
+    OClass classB = schema.createClass("TestExistsB", classA);
+
+    Assert.assertNotNull(classB.getProperty("property"));
+    Assert.assertTrue(classB.existsProperty("property"));
+
+    schema = ((OMetadataInternal) database.getMetadata()).getImmutableSchemaSnapshot();
+    classB = schema.getClass("TestExistsB");
+
+    Assert.assertNotNull(classB.getProperty("property"));
+    Assert.assertTrue(classB.existsProperty("property"));
+
+  }
+
+  public void testWrongClassNameWithAt() {
+    try {
+      database.command(new OCommandSQL("create class `Ant@ni`")).execute();
+      Assert.fail();
+      //why...? it can be allowed now with backtick quoting...
+    } catch (Exception e) {
+      Assert.assertTrue(e instanceof OSchemaException);
+    }
+  }
+
+  public void testWrongClassNameWithSpace() {
+    try {
+      database.getMetadata().getSchema().createClass("Anta ni");
+      Assert.fail();
+
+    } catch (Exception e) {
+      Assert.assertTrue(e instanceof OSchemaException);
+    }
+  }
+  
+  public void testWrongClassNameWithComma() {
+    try {
+      database.getMetadata().getSchema().createClass("Anta,ni");
+      Assert.fail();
+
+    } catch (Exception e) {
+      Assert.assertTrue(e instanceof OSchemaException);
+    }
+  }
+
+  public void testWrongClassNameWithColon() {
+    try {
+      database.command(new OCommandSQL("create class `Ant:ni`")).execute();
+      Assert.fail();
+      //why...? it can be allowed now with backtick quoting...
+    } catch (Exception e) {
+      Assert.assertTrue(e instanceof OSchemaException);
+    }
+  }
+
+  public void testRenameWithSameNameIsNop() {
+    database.getMetadata().getSchema().getClass("V").setName("V");
+  }
+
+  public void testRenameWithExistentName() {
+    try {
+      database.getMetadata().getSchema().getClass("V").setName("OUser");
+      Assert.fail();
+    } catch (OSchemaException e) {
+    } catch (OCommandExecutionException e) {
+    }
+  }
+
+  public void testShortNameAlreadyExists() {
+    try {
+      database.getMetadata().getSchema().getClass("V").setShortName("OUser");
+      Assert.fail();
+    } catch (IllegalArgumentException e) {
+    } catch (OCommandExecutionException e) {
+    }
+  }
+
+  @Test
+  public void testDeletionOfDependentClass() {
+    OSchema schema = database.getMetadata().getSchema();
+    OClass oRestricted = schema.getClass(OSecurityShared.RESTRICTED_CLASSNAME);
+    OClass classA = schema.createClass("TestDeletionOfDependentClassA", oRestricted);
+    OClass classB = schema.createClass("TestDeletionOfDependentClassB", classA);
+    schema.dropClass(classB.getName());
   }
 
   private void swapClusters(ODatabaseDocumentTx databaseDocumentTx, int i) {
@@ -495,11 +662,12 @@ public class SchemaTest extends DocumentDBBaseTest {
     databaseDocumentTx.command(new OCommandSQL("DROP CLUSTER TestRenameClusterOriginal")).execute();
     databaseDocumentTx.command(new OCommandSQL("ALTER CLUSTER TestRenameClusterNew name TestRenameClusterOriginal")).execute();
 
+    databaseDocumentTx.getLocalCache().clear();
+
     List<ODocument> result = databaseDocumentTx.query(new OSQLSynchQuery<ODocument>("select * from TestRenameClusterOriginal"));
-    Assert.assertEquals(result.size(), 1);
+    assertEquals(result.size(), 1);
 
     ODocument document = result.get(0);
-    Assert.assertEquals(document.field("iteration"), i);
+    assertEquals(document.field("iteration"), i);
   }
-
 }

@@ -1,209 +1,206 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.storage;
 
 import com.orientechnologies.common.concur.resource.OSharedContainer;
-import com.orientechnologies.common.concur.resource.OSharedResourceAdaptiveExternal;
 import com.orientechnologies.orient.core.command.OCommandRequestText;
 import com.orientechnologies.orient.core.config.OStorageConfiguration;
 import com.orientechnologies.orient.core.conflict.ORecordConflictStrategy;
 import com.orientechnologies.orient.core.db.record.OCurrentStorageComponentsFactory;
+import com.orientechnologies.orient.core.db.record.ORecordOperation;
 import com.orientechnologies.orient.core.db.record.ridbag.sbtree.OSBTreeCollectionManager;
-import com.orientechnologies.orient.core.id.OClusterPosition;
+import com.orientechnologies.orient.core.exception.ORecordNotFoundException;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.tx.OTransaction;
 import com.orientechnologies.orient.core.util.OBackupable;
-import com.orientechnologies.orient.core.version.ORecordVersion;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Callable;
 
 /**
  * This is the gateway interface between the Database side and the storage. Provided implementations are: Local, Remote and Memory.
- * 
+ *
  * @author Luca Garulli
  * @see com.orientechnologies.orient.core.storage.impl.memory.ODirectMemoryStorage
  */
 
 public interface OStorage extends OBackupable, OSharedContainer {
-  public static final String CLUSTER_DEFAULT_NAME = "default";
+  String CLUSTER_DEFAULT_NAME = "default";
 
-  public enum SIZE {
+  enum SIZE {
     TINY, MEDIUM, LARGE, HUGE
   }
 
-  public enum STATUS {
-    CLOSED, OPEN, CLOSING, OPENING
+  enum STATUS {
+    CLOSED, OPEN, CLOSING, @Deprecated OPENING
   }
 
-  public enum LOCKING_STRATEGY {
-    NONE, DEFAULT, KEEP_SHARED_LOCK, KEEP_EXCLUSIVE_LOCK
+  enum LOCKING_STRATEGY {
+    NONE, DEFAULT, SHARED_LOCK, EXCLUSIVE_LOCK,
+
+    @Deprecated KEEP_SHARED_LOCK,
+
+    @Deprecated KEEP_EXCLUSIVE_LOCK
   }
 
-  public void open(String iUserName, String iUserPassword, final Map<String, Object> iProperties);
+  void open(String iUserName, String iUserPassword, final Map<String, Object> iProperties);
 
-  public void create(Map<String, Object> iProperties);
+  void create(Map<String, Object> iProperties);
 
-  public boolean exists();
+  boolean exists();
 
-  public void reload();
+  void reload();
 
-  public void delete();
+  void delete();
 
-  public void close();
+  void close();
 
-  public void close(boolean iForce, boolean onDelete);
+  void close(boolean iForce, boolean onDelete);
 
-  public boolean isClosed();
-
-  public OSharedResourceAdaptiveExternal getLock();
+  boolean isClosed();
 
   // CRUD OPERATIONS
-  public OStorageOperationResult<OPhysicalPosition> createRecord(ORecordId iRecordId, byte[] iContent,
-      ORecordVersion iRecordVersion, byte iRecordType, int iMode, ORecordCallback<OClusterPosition> iCallback);
+  OStorageOperationResult<OPhysicalPosition> createRecord(ORecordId iRecordId, byte[] iContent, int iRecordVersion,
+      byte iRecordType, int iMode, ORecordCallback<Long> iCallback);
 
-  public OStorageOperationResult<ORawBuffer> readRecord(ORecordId iRid, String iFetchPlan, boolean iIgnoreCache,
-      ORecordCallback<ORawBuffer> iCallback, boolean loadTombstones, LOCKING_STRATEGY iLockingStrategy);
+  OStorageOperationResult<ORawBuffer> readRecord(ORecordId iRid, String iFetchPlan, boolean iIgnoreCache, boolean prefetchRecords,
+      ORecordCallback<ORawBuffer> iCallback);
 
-  public OStorageOperationResult<ORecordVersion> updateRecord(ORecordId iRecordId, boolean updateContent, byte[] iContent,
-      ORecordVersion iVersion, byte iRecordType, int iMode, ORecordCallback<ORecordVersion> iCallback);
+  OStorageOperationResult<ORawBuffer> readRecordIfVersionIsNotLatest(ORecordId rid, String fetchPlan, boolean ignoreCache,
+      int recordVersion) throws ORecordNotFoundException;
 
-  public OStorageOperationResult<Boolean> deleteRecord(ORecordId iRecordId, ORecordVersion iVersion, int iMode,
-      ORecordCallback<Boolean> iCallback);
+  OStorageOperationResult<Integer> updateRecord(ORecordId iRecordId, boolean updateContent, byte[] iContent, int iVersion,
+      byte iRecordType, int iMode, ORecordCallback<Integer> iCallback);
 
-  public ORecordMetadata getRecordMetadata(final ORID rid);
+  /**
+   * Resurrects a record that was previously deleted.
+   */
+  void recyclePosition(ORecordId record, byte[] content, int recordVersion, byte recordType);
 
-  public boolean cleanOutRecord(ORecordId recordId, ORecordVersion recordVersion, int iMode, ORecordCallback<Boolean> callback);
+  OStorageOperationResult<Boolean> deleteRecord(ORecordId iRecordId, int iVersion, int iMode, ORecordCallback<Boolean> iCallback);
+
+  ORecordMetadata getRecordMetadata(final ORID rid);
+
+  boolean cleanOutRecord(ORecordId recordId, int recordVersion, int iMode, ORecordCallback<Boolean> callback);
 
   // TX OPERATIONS
-  public void commit(OTransaction iTx, Runnable callback);
+  List<ORecordOperation> commit(OTransaction iTx, Runnable callback);
 
   // TX OPERATIONS
-  public void rollback(OTransaction iTx);
+  void rollback(OTransaction iTx);
 
   // MISC
-  public OStorageConfiguration getConfiguration();
+  OStorageConfiguration getConfiguration();
 
-  public int getClusters();
+  int getClusters();
 
-  public Set<String> getClusterNames();
+  Set<String> getClusterNames();
 
-  public OCluster getClusterById(int iId);
+  OCluster getClusterById(int iId);
 
-  public Collection<? extends OCluster> getClusterInstances();
-
-  /**
-   * Add a new cluster into the storage.
-   * 
-   * @param iClusterName
-   *          name of the cluster
-   * @param forceListBased
-   * @param iParameters
-   */
-  public int addCluster(String iClusterName, boolean forceListBased, Object... iParameters);
+  Collection<? extends OCluster> getClusterInstances();
 
   /**
    * Add a new cluster into the storage.
-   * 
-   * @param iClusterName
-   *          name of the cluster
-   * @param iRequestedId
-   *          requested id of the cluster
+   *
+   * @param iClusterName   name of the cluster
    * @param forceListBased
    * @param iParameters
    */
-  public int addCluster(String iClusterName, int iRequestedId, boolean forceListBased, Object... iParameters);
+  int addCluster(String iClusterName, boolean forceListBased, Object... iParameters);
 
-  public boolean dropCluster(String iClusterName, final boolean iTruncate);
+  /**
+   * Add a new cluster into the storage.
+   *
+   * @param iClusterName   name of the cluster
+   * @param iRequestedId   requested id of the cluster
+   * @param forceListBased
+   * @param iParameters
+   */
+  int addCluster(String iClusterName, int iRequestedId, boolean forceListBased, Object... iParameters);
+
+  boolean dropCluster(String iClusterName, final boolean iTruncate);
 
   /**
    * Drops a cluster.
-   * 
-   * @param iId
-   *          id of the cluster to delete
+   *
+   * @param iId id of the cluster to delete
+   *
    * @return true if has been removed, otherwise false
    */
-  public boolean dropCluster(int iId, final boolean iTruncate);
+  boolean dropCluster(int iId, final boolean iTruncate);
 
-  public long count(int iClusterId);
+  long count(int iClusterId);
 
-  public long count(int iClusterId, boolean countTombstones);
+  long count(int iClusterId, boolean countTombstones);
 
-  public long count(int[] iClusterIds);
+  long count(int[] iClusterIds);
 
-  public long count(int[] iClusterIds, boolean countTombstones);
+  long count(int[] iClusterIds, boolean countTombstones);
 
   /**
    * Returns the size of the database.
    */
-  public long getSize();
+  long getSize();
 
   /**
    * Returns the total number of records.
    */
-  public long countRecords();
+  long countRecords();
 
-  public int getDefaultClusterId();
+  int getDefaultClusterId();
 
-  public void setDefaultClusterId(final int defaultClusterId);
+  void setDefaultClusterId(final int defaultClusterId);
 
-  public int getClusterIdByName(String iClusterName);
+  int getClusterIdByName(String iClusterName);
 
-  public String getPhysicalClusterNameById(int iClusterId);
+  String getPhysicalClusterNameById(int iClusterId);
 
-  public boolean checkForRecordValidity(OPhysicalPosition ppos);
+  boolean checkForRecordValidity(OPhysicalPosition ppos);
 
-  public String getName();
+  String getName();
 
-  public String getURL();
+  String getURL();
 
-  public long getVersion();
+  long getVersion();
 
-  public void synch();
-
-  public int getUsers();
-
-  public int addUser();
-
-  public int removeUser();
+  void synch();
 
   /**
    * Execute the command request and return the result back.
    */
-  public Object command(OCommandRequestText iCommand);
+  Object command(OCommandRequestText iCommand);
 
   /**
    * Returns a pair of long values telling the begin and end positions of data in the requested cluster. Useful to know the range of
    * the records.
-   * 
-   * @param currentClusterId
-   *          Cluster id
+   *
+   * @param currentClusterId Cluster id
    */
-  public OClusterPosition[] getClusterDataRange(int currentClusterId);
+  long[] getClusterDataRange(int currentClusterId);
 
-  public <V> V callInLock(Callable<V> iCallable, boolean iExclusiveLock);
-
-  public <V> V callInRecordLock(Callable<V> iCallable, ORID rid, boolean iExclusiveLock);
+  <V> V callInLock(Callable<V> iCallable, boolean iExclusiveLock);
 
   OPhysicalPosition[] higherPhysicalPositions(int clusterId, OPhysicalPosition physicalPosition);
 
@@ -215,35 +212,52 @@ public interface OStorage extends OBackupable, OSharedContainer {
 
   /**
    * Returns the current storage's status
-   * 
+   *
    * @return
    */
-  public STATUS getStatus();
+  STATUS getStatus();
 
   /**
    * Returns the storage's type.
-   * 
+   *
    * @return
    */
-  public String getType();
+  String getType();
 
-  public void checkForClusterPermissions(final String iClusterName);
+  void checkForClusterPermissions(final String iClusterName);
 
-  public OStorage getUnderlying();
+  OStorage getUnderlying();
 
-  public boolean isDistributed();
+  boolean isRemote();
 
-  public Class<? extends OSBTreeCollectionManager> getCollectionManagerClass();
+  boolean isDistributed();
 
-  public OCurrentStorageComponentsFactory getComponentsFactory();
+  boolean isAssigningClusterIds();
 
-  public long getLastOperationId();
+  OSBTreeCollectionManager getSBtreeCollectionManager();
 
-  public OStorageOperationResult<Boolean> hideRecord(ORecordId recordId, int mode, ORecordCallback<Boolean> callback);
+  OCurrentStorageComponentsFactory getComponentsFactory();
 
-  public OCluster getClusterByName(String clusterName);
+  OStorageOperationResult<Boolean> hideRecord(ORecordId recordId, int mode, ORecordCallback<Boolean> callback);
 
-  public ORecordConflictStrategy getConflictStrategy();
+  OCluster getClusterByName(String clusterName);
+
+  ORecordConflictStrategy getConflictStrategy();
 
   void setConflictStrategy(ORecordConflictStrategy iResolver);
+
+  /**
+   * @param backupDirectory
+   *
+   * @return Backup file name
+   */
+  String incrementalBackup(String backupDirectory);
+
+  void restoreFromIncrementalBackup(String filePath);
+
+  /**
+   * This method is called in {@link com.orientechnologies.orient.core.Orient#shutdown()} method. For most of the storages it means
+   * that storage will be merely closed, but sometimes additional operations are need to be taken in account.
+   */
+  void shutdown();
 }

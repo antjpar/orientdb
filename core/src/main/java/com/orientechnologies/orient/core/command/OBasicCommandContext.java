@@ -1,31 +1,35 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.command;
 
 import com.orientechnologies.common.concur.OTimeoutException;
 import com.orientechnologies.orient.core.metadata.schema.OType;
+import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.record.impl.ODocumentHelper;
 import com.orientechnologies.orient.core.serialization.serializer.OStringSerializerHelper;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Basic implementation of OCommandContext interface that stores variables in a map. Supports parent/child context to build a tree
@@ -35,20 +39,24 @@ import java.util.Map;
  * 
  */
 public class OBasicCommandContext implements OCommandContext {
-  public static final String                                                         EXECUTION_BEGUN  = "EXECUTION_BEGUN";
-  public static final String                                                         TIMEOUT_MS       = "TIMEOUT_MS";
-  public static final String                                                         TIMEOUT_STRATEGY = "TIMEOUT_STARTEGY";
+  public static final String                                                         EXECUTION_BEGUN       = "EXECUTION_BEGUN";
+  public static final String                                                         TIMEOUT_MS            = "TIMEOUT_MS";
+  public static final String                                                         TIMEOUT_STRATEGY      = "TIMEOUT_STARTEGY";
   public static final String                                                         INVALID_COMPARE_COUNT = "INVALID_COMPARE_COUNT";
 
-  protected boolean                                                                  recordMetrics    = false;
+  protected boolean                                                                  recordMetrics         = false;
   protected OCommandContext                                                          parent;
   protected OCommandContext                                                          child;
   protected Map<String, Object>                                                      variables;
+
+  protected Map<Object, Object>                                                      inputParameters;
 
   // MANAGES THE TIMEOUT
   private long                                                                       executionStartedOn;
   private long                                                                       timeoutMs;
   private com.orientechnologies.orient.core.command.OCommandContext.TIMEOUT_STRATEGY timeoutStrategy;
+  protected AtomicLong                                                               resultsProcessed      = new AtomicLong(0);
+  protected Set<Object>                                                              uniqueResult          = new HashSet<Object>();
 
   public OBasicCommandContext() {
   }
@@ -113,14 +121,28 @@ public class OBasicCommandContext implements OCommandContext {
     } else {
       if (variables != null && variables.containsKey(firstPart))
         result = variables.get(firstPart);
-      else if (child != null)
-        result = child.getVariable(firstPart);
+      else {
+        if (child != null)
+          result = child.getVariable(firstPart);
+        else
+          result = getVariableFromParentHierarchy(firstPart);
+      }
     }
 
     if (pos > -1)
       result = ODocumentHelper.getFieldValue(result, lastPart, this);
 
     return result != null ? result : iDefault;
+  }
+
+  protected Object getVariableFromParentHierarchy(String varName) {
+    if (this.variables != null && variables.containsKey(varName)) {
+      return variables.get(varName);
+    }
+    if (parent!=null && parent instanceof OBasicCommandContext) {
+      return ((OBasicCommandContext) parent).getVariableFromParentHierarchy(varName);
+    }
+    return null;
   }
 
   public OCommandContext setVariable(String iName, final Object iValue) {
@@ -235,11 +257,6 @@ public class OBasicCommandContext implements OCommandContext {
     return getVariables().toString();
   }
 
-  private void init() {
-    if (variables == null)
-      variables = new HashMap<String, Object>();
-  }
-
   public boolean isRecordingMetrics() {
     return recordMetrics;
   }
@@ -269,9 +286,69 @@ public class OBasicCommandContext implements OCommandContext {
           throw new OTimeoutException("Command execution timeout exceed (" + timeoutMs + "ms)");
         }
       }
-    }
+    } else if (parent != null)
+      // CHECK THE TIMER OF PARENT CONTEXT
+      return parent.checkTimeout();
 
     return true;
   }
 
+  @Override
+  public OCommandContext copy() {
+    final OBasicCommandContext copy = new OBasicCommandContext();
+    copy.init();
+
+    if (variables != null && !variables.isEmpty())
+      copy.variables.putAll(variables);
+
+    copy.recordMetrics = recordMetrics;
+    copy.parent = parent;
+    copy.child = child;
+    return copy;
+  }
+
+  @Override
+  public void merge(final OCommandContext iContext) {
+    // TODO: SOME VALUES NEED TO BE MERGED
+  }
+
+  private void init() {
+    if (variables == null)
+      variables = new HashMap<String, Object>();
+  }
+
+  public Map<Object, Object> getInputParameters() {
+    if (inputParameters != null) {
+      return inputParameters;
+    }
+
+    return parent == null ? null : parent.getInputParameters();
+  }
+
+  public void setInputParameters(Map<Object, Object> inputParameters) {
+    this.inputParameters = inputParameters;
+
+  }
+
+  /**
+   * returns the number of results processed. This is intended to be used with LIMIT in SQL statements
+   * 
+   * @return
+   */
+  public AtomicLong getResultsProcessed() {
+    return resultsProcessed;
+  }
+
+  /**
+   * adds an item to the unique result set
+   * @param o the result item to add
+   * @return true if the element is successfully added (it was not present yet), false otherwise (it was already present)
+   */
+  public synchronized boolean addToUniqueResult(Object o) {
+    Object toAdd = o;
+    if(o instanceof ODocument && ((ODocument) o).getIdentity().isNew()){
+      toAdd = new ODocumentEqualityWrapper((ODocument) o);
+    }
+    return this.uniqueResult.add(toAdd);
+  }
 }

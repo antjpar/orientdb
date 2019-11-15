@@ -1,22 +1,19 @@
 package com.orientechnologies.orient.test.database.auto;
 
-import java.io.IOException;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
-import org.testng.Assert;
-import org.testng.annotations.*;
-
-import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.metadata.schema.OSchema;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.sql.OCommandSQL;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
+import org.testng.Assert;
+import org.testng.annotations.*;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
- * @author <a href="mailto:enisher@gmail.com">Artem Orobets</a>
+ * @author Artem Orobets (enisher-at-gmail.com)
  */
 public class IndexTxTest extends DocumentDBBaseTest {
 
@@ -31,7 +28,7 @@ public class IndexTxTest extends DocumentDBBaseTest {
 
     database.command(new OCommandSQL("create class IndexTxTestClass")).execute();
     database.command(new OCommandSQL("create property IndexTxTestClass.name string")).execute();
-    database.command(new OCommandSQL("create index IndexTxTestIndex on IndexTxTestClass (name) unique")).execute();
+    database.command(new OCommandSQL("create index IndexTxTestIndex on IndexTxTestClass (name) unique METADATA {ignoreNullValues:true}")).execute();
   }
 
   @BeforeMethod

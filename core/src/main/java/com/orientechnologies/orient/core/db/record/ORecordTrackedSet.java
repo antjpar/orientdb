@@ -1,35 +1,25 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.db.record;
 
-import java.util.AbstractCollection;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.ListIterator;
-import java.util.Map;
-import java.util.Set;
-import java.util.WeakHashMap;
+import java.util.*;
 
 import com.orientechnologies.orient.core.record.ORecord;
 import com.orientechnologies.orient.core.record.ORecordInternal;
@@ -45,12 +35,11 @@ import com.orientechnologies.orient.core.record.impl.ODocumentInternal;
  */
 public class ORecordTrackedSet extends AbstractCollection<OIdentifiable> implements Set<OIdentifiable>,
     OTrackedMultiValue<OIdentifiable, OIdentifiable>, ORecordElement {
-  protected final ORecord                                              sourceRecord;
-  protected Map<OIdentifiable, Object>                                 map             = new HashMap<OIdentifiable, Object>();
-  private STATUS                                                       status          = STATUS.NOT_LOADED;
-  protected final static Object                                        ENTRY_REMOVAL   = new Object();
-  private Set<OMultiValueChangeListener<OIdentifiable, OIdentifiable>> changeListeners = Collections
-                                                                                           .newSetFromMap(new WeakHashMap<OMultiValueChangeListener<OIdentifiable, OIdentifiable>, Boolean>());
+  protected final ORecord                                               sourceRecord;
+  protected Map<OIdentifiable, Object>                                  map             = new HashMap<OIdentifiable, Object>();
+  private STATUS                                                        status          = STATUS.NOT_LOADED;
+  protected final static Object                                         ENTRY_REMOVAL   = new Object();
+  private List<OMultiValueChangeListener<OIdentifiable, OIdentifiable>> changeListeners;
 
   public ORecordTrackedSet(final ORecord iSourceRecord) {
     this.sourceRecord = iSourceRecord;
@@ -73,7 +62,9 @@ public class ORecordTrackedSet extends AbstractCollection<OIdentifiable> impleme
 
     map.put(e, ENTRY_REMOVAL);
     setDirty();
-
+    
+    ORecordInternal.track(sourceRecord, e);
+    
     if (e instanceof ODocument)
       ODocumentInternal.addOwner((ODocument) e, this);
 
@@ -160,15 +151,6 @@ public class ORecordTrackedSet extends AbstractCollection<OIdentifiable> impleme
       sourceRecord.setDirtyNoChanged();
   }
 
-  public void onBeforeIdentityChanged(final ORecord iRecord) {
-    map.remove(iRecord);
-    setDirty();
-  }
-
-  public void onAfterIdentityChanged(final ORecord iRecord) {
-    map.put(iRecord, ENTRY_REMOVAL);
-  }
-
   public STATUS getInternalStatus() {
     return status;
   }
@@ -178,11 +160,14 @@ public class ORecordTrackedSet extends AbstractCollection<OIdentifiable> impleme
   }
 
   public void addChangeListener(final OMultiValueChangeListener<OIdentifiable, OIdentifiable> changeListener) {
+    if(changeListeners == null)
+      changeListeners = new LinkedList<OMultiValueChangeListener<OIdentifiable, OIdentifiable>>();
     changeListeners.add(changeListener);
   }
 
   public void removeRecordChangeListener(final OMultiValueChangeListener<OIdentifiable, OIdentifiable> changeListener) {
-    changeListeners.remove(changeListener);
+    if (changeListeners != null)
+      changeListeners.remove(changeListener);
   }
 
   public Set<OIdentifiable> returnOriginalState(final List<OMultiValueChangeEvent<OIdentifiable, OIdentifiable>> events) {
@@ -207,20 +192,28 @@ public class ORecordTrackedSet extends AbstractCollection<OIdentifiable> impleme
     return reverted;
   }
 
-  protected void fireCollectionChangedEvent(final OMultiValueChangeEvent<OIdentifiable, OIdentifiable> event) {
+  public void fireCollectionChangedEvent(final OMultiValueChangeEvent<OIdentifiable, OIdentifiable> event) {
     if (getOwner().getInternalStatus() == STATUS.UNMARSHALLING)
       return;
 
     setDirty();
-    for (final OMultiValueChangeListener<OIdentifiable, OIdentifiable> changeListener : changeListeners) {
-      if (changeListener != null)
-        changeListener.onAfterRecordChanged(event);
+    if (changeListeners != null) {
+      for (final OMultiValueChangeListener<OIdentifiable, OIdentifiable> changeListener : changeListeners) {
+        if (changeListener != null)
+          changeListener.onAfterRecordChanged(event);
+      }
     }
   }
 
   @Override
   public Class<?> getGenericClass() {
     return OIdentifiable.class;
+  }
+
+
+  @Override
+  public void replace(OMultiValueChangeEvent<Object, Object> event, Object newValue) {
+    //not needed do nothing
   }
 
 }

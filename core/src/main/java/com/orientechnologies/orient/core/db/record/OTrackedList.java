@@ -1,37 +1,31 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.db.record;
-
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.ListIterator;
-import java.util.Set;
-import java.util.WeakHashMap;
 
 import com.orientechnologies.orient.core.record.ORecord;
 import com.orientechnologies.orient.core.record.ORecordInternal;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.record.impl.ODocumentInternal;
+
+import java.io.Serializable;
+import java.util.*;
 
 /**
  * Implementation of ArrayList bound to a source ORecord object to keep track of changes for literal types. This avoid to call the
@@ -42,12 +36,11 @@ import com.orientechnologies.orient.core.record.impl.ODocumentInternal;
  */
 @SuppressWarnings({ "serial" })
 public class OTrackedList<T> extends ArrayList<T> implements ORecordElement, OTrackedMultiValue<Integer, T>, Serializable {
-  protected final ORecord                              sourceRecord;
-  private STATUS                                       status          = STATUS.NOT_LOADED;
-  protected Set<OMultiValueChangeListener<Integer, T>> changeListeners = Collections
-                                                                           .newSetFromMap(new WeakHashMap<OMultiValueChangeListener<Integer, T>, Boolean>());
-  protected Class<?>                                   genericClass;
-  private final boolean                                embeddedCollection;
+  protected final ORecord                               sourceRecord;
+  private STATUS                                        status          = STATUS.NOT_LOADED;
+  protected List<OMultiValueChangeListener<Integer, T>> changeListeners = null;
+  protected Class<?>                                    genericClass;
+  private final boolean                                 embeddedCollection;
 
   public OTrackedList(final ORecord iRecord, final Collection<? extends T> iOrigin, final Class<?> iGenericClass) {
     this(iRecord);
@@ -77,6 +70,7 @@ public class OTrackedList<T> extends ArrayList<T> implements ORecordElement, OTr
           element));
     }
 
+    addNested(element);
     return result;
   }
 
@@ -93,7 +87,7 @@ public class OTrackedList<T> extends ArrayList<T> implements ORecordElement, OTr
     super.add(index, element);
 
     addOwnerToEmbeddedDoc(element);
-
+    addNested(element);
     fireCollectionChangedEvent(new OMultiValueChangeEvent<Integer, T>(OMultiValueChangeEvent.OChangeType.ADD, index, element));
   }
 
@@ -111,23 +105,44 @@ public class OTrackedList<T> extends ArrayList<T> implements ORecordElement, OTr
           oldValue));
     }
 
+    addNested(element);
+
     return oldValue;
   }
 
+  private void addNested(T element) {
+    if (element instanceof OTrackedMultiValue) {
+      ((OTrackedMultiValue) element)
+          .addChangeListener(new ONestedValueChangeListener((ODocument) sourceRecord, this, (OTrackedMultiValue) element));
+    }
+  }
+
   private void addOwnerToEmbeddedDoc(T e) {
-    if (embeddedCollection && e instanceof ODocument && !((ODocument) e).getIdentity().isValid())
+    if (embeddedCollection && e instanceof ODocument && !((ODocument) e).getIdentity().isValid()) {
       ODocumentInternal.addOwner((ODocument) e, this);
+    }
+    if (e instanceof ODocument)
+      ORecordInternal.track(sourceRecord, (ODocument) e);
   }
 
   @Override
   public T remove(int index) {
     final T oldValue = super.remove(index);
-    if (oldValue instanceof ODocument)
+    if (oldValue instanceof ODocument) {
       ODocumentInternal.removeOwner((ODocument) oldValue, this);
+    }
 
     fireCollectionChangedEvent(new OMultiValueChangeEvent<Integer, T>(OMultiValueChangeEvent.OChangeType.REMOVE, index, null,
         oldValue));
+    removeNested(oldValue);
+
     return oldValue;
+  }
+
+  private void removeNested(Object element){
+    if(element instanceof OTrackedMultiValue){
+//      ((OTrackedMultiValue) element).removeRecordChangeListener(null);
+    }
   }
 
   @Override
@@ -141,9 +156,19 @@ public class OTrackedList<T> extends ArrayList<T> implements ORecordElement, OTr
   }
 
   @Override
+  public boolean removeAll(Collection<?> c) {
+    boolean removed = false;
+    for (Object o : c)
+      removed = removed | remove(o);
+
+    return removed;
+  }
+
+  @Override
   public void clear() {
     final List<T> origValues;
-    if (changeListeners.isEmpty())
+
+    if (changeListeners!=null && changeListeners.isEmpty())
       origValues = null;
     else
       origValues = new ArrayList<T>(this);
@@ -165,6 +190,7 @@ public class OTrackedList<T> extends ArrayList<T> implements ORecordElement, OTr
 
         fireCollectionChangedEvent(new OMultiValueChangeEvent<Integer, T>(OMultiValueChangeEvent.OChangeType.REMOVE, i, null,
             origValue));
+        removeNested(origValue);
       }
     else
       setDirty();
@@ -188,18 +214,17 @@ public class OTrackedList<T> extends ArrayList<T> implements ORecordElement, OTr
       sourceRecord.setDirtyNoChanged();
   }
 
-  public void onBeforeIdentityChanged(ORecord iRecord) {
-  }
-
-  public void onAfterIdentityChanged(ORecord iRecord) {
-  }
-
   public void addChangeListener(final OMultiValueChangeListener<Integer, T> changeListener) {
+    if(changeListeners==null){
+      changeListeners = new LinkedList<OMultiValueChangeListener<Integer, T>>();
+    }
     changeListeners.add(changeListener);
   }
 
   public void removeRecordChangeListener(final OMultiValueChangeListener<Integer, T> changeListener) {
-    changeListeners.remove(changeListener);
+    if(changeListeners!=null) {
+      changeListeners.remove(changeListener);
+    }
   }
 
   public List<T> returnOriginalState(final List<OMultiValueChangeEvent<Integer, T>> multiValueChangeEvents) {
@@ -228,14 +253,15 @@ public class OTrackedList<T> extends ArrayList<T> implements ORecordElement, OTr
     return reverted;
   }
 
-  protected void fireCollectionChangedEvent(final OMultiValueChangeEvent<Integer, T> event) {
+  public void fireCollectionChangedEvent(final OMultiValueChangeEvent<Integer, T> event) {
     if (status == STATUS.UNMARSHALLING)
       return;
-
     setDirty();
-    for (final OMultiValueChangeListener<Integer, T> changeListener : changeListeners) {
-      if (changeListener != null)
-        changeListener.onAfterRecordChanged(event);
+    if (changeListeners != null) {
+      for (final OMultiValueChangeListener<Integer, T> changeListener : changeListeners) {
+        if (changeListener != null)
+          changeListener.onAfterRecordChanged(event);
+      }
     }
   }
 
@@ -258,4 +284,13 @@ public class OTrackedList<T> extends ArrayList<T> implements ORecordElement, OTr
   private Object writeReplace() {
     return new ArrayList<T>(this);
   }
+
+  @Override
+  public void replace(OMultiValueChangeEvent<Object, Object> event, Object newValue) {
+    super.set((Integer) event.getKey(), (T) newValue);
+    addNested((T) newValue);
+  }
+
+
+
 }

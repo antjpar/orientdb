@@ -1,27 +1,29 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.record;
 
 import com.orientechnologies.common.exception.OException;
+import com.orientechnologies.common.exception.OSystemException;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
-import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
+import com.orientechnologies.orient.core.record.impl.OBlob;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.record.impl.ORecordBytes;
 import com.orientechnologies.orient.core.record.impl.ORecordFlat;
@@ -34,10 +36,9 @@ import com.orientechnologies.orient.core.record.impl.ORecordFlat;
  * declareRecordType('m', "myrecord", MyRecord.class);
  * </code>
  * </p>
- * 
+ *
  * @author Sylvain Spinelli
  * @author Luca Garulli (l.garulli--at--orientechnologies.com)
- * 
  */
 @SuppressWarnings("unchecked")
 public class ORecordFactoryManager {
@@ -46,7 +47,7 @@ public class ORecordFactoryManager {
   protected final ORecordFactory[]           recordFactories = new ORecordFactory[Byte.MAX_VALUE];
 
   public interface ORecordFactory {
-    public ORecord newRecord();
+    ORecord newRecord();
   }
 
   public ORecordFactoryManager() {
@@ -55,14 +56,14 @@ public class ORecordFactoryManager {
         return new ODocument();
       }
     });
+    declareRecordType(OBlob.RECORD_TYPE, "bytes", OBlob.class, new ORecordFactory() {
+      public ORecord newRecord() {
+        return new ORecordBytes();
+      }
+    });
     declareRecordType(ORecordFlat.RECORD_TYPE, "flat", ORecordFlat.class, new ORecordFactory() {
       public ORecord newRecord() {
         return new ORecordFlat();
-      }
-    });
-    declareRecordType(ORecordBytes.RECORD_TYPE, "bytes", ORecordBytes.class, new ORecordFactory() {
-      public ORecord newRecord() {
-        return new ORecordBytes();
       }
     });
   }
@@ -82,7 +83,7 @@ public class ORecordFactoryManager {
   }
 
   public ORecord newInstance() {
-    final ODatabaseRecord database = ODatabaseRecordThreadLocal.INSTANCE.get();
+    final ODatabaseDocument database = ODatabaseRecordThreadLocal.INSTANCE.get();
     try {
       return (ORecord) getFactory(database.getRecordType()).newRecord();
     } catch (Exception e) {
@@ -100,7 +101,7 @@ public class ORecordFactoryManager {
 
   public void declareRecordType(byte iByte, String iName, Class<? extends ORecord> iClass, final ORecordFactory iFactory) {
     if (recordTypes[iByte] != null)
-      throw new OException("Record type byte '" + iByte + "' already in use : " + recordTypes[iByte].getName());
+      throw new OSystemException("Record type byte '" + iByte + "' already in use : " + recordTypes[iByte].getName());
     recordTypeNames[iByte] = iName;
     recordTypes[iByte] = iClass;
     recordFactories[iByte] = iFactory;

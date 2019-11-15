@@ -1,35 +1,27 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.index;
-
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 import com.orientechnologies.common.listener.OProgressListener;
 import com.orientechnologies.orient.core.command.OCommandRequest;
-import com.orientechnologies.orient.core.db.ODatabaseComplex;
+import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
 import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.id.ORID;
@@ -38,51 +30,54 @@ import com.orientechnologies.orient.core.record.ORecord;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.sql.OCommandSQL;
 
+import java.util.*;
+
 /**
  * Proxied abstract index.
- * 
+ *
  * @author Luca Garulli
- * 
  */
 @SuppressWarnings("unchecked")
 public abstract class OIndexRemote<T> implements OIndex<T> {
-  public static final String    QUERY_GET_VALUES_BEETWEN_SELECT                   = "select from index:%s where ";
-  public static final String    QUERY_GET_VALUES_BEETWEN_INCLUSIVE_FROM_CONDITION = "key >= ?";
-  public static final String    QUERY_GET_VALUES_BEETWEN_EXCLUSIVE_FROM_CONDITION = "key > ?";
-  public static final String    QUERY_GET_VALUES_BEETWEN_INCLUSIVE_TO_CONDITION   = "key <= ?";
-  public static final String    QUERY_GET_VALUES_BEETWEN_EXCLUSIVE_TO_CONDITION   = "key < ?";
-  public static final String    QUERY_GET_VALUES_AND_OPERATOR                     = " and ";
-  public static final String    QUERY_GET_VALUES_LIMIT                            = " limit ";
+  public static final    String QUERY_GET_VALUES_BEETWEN_SELECT                   = "select from index:%s where ";
+  public static final    String QUERY_GET_VALUES_BEETWEN_INCLUSIVE_FROM_CONDITION = "key >= ?";
+  public static final    String QUERY_GET_VALUES_BEETWEN_EXCLUSIVE_FROM_CONDITION = "key > ?";
+  public static final    String QUERY_GET_VALUES_BEETWEN_INCLUSIVE_TO_CONDITION   = "key <= ?";
+  public static final    String QUERY_GET_VALUES_BEETWEN_EXCLUSIVE_TO_CONDITION   = "key < ?";
+  public static final    String QUERY_GET_VALUES_AND_OPERATOR                     = " and ";
+  public static final    String QUERY_GET_VALUES_LIMIT                            = " limit ";
   protected final static String QUERY_ENTRIES                                     = "select key, rid from index:%s";
   protected final static String QUERY_ENTRIES_DESC                                = "select key, rid from index:%s order by key desc";
 
-  private final static String   QUERY_GET_ENTRIES                                 = "select from index:%s where key in [%s]";
+  private final static String QUERY_GET_ENTRIES = "select from index:%s where key in [%s]";
 
-  private final static String   QUERY_PUT                                         = "insert into index:%s (key,rid) values (?,?)";
-  private final static String   QUERY_REMOVE                                      = "delete from index:%s where key = ?";
-  private final static String   QUERY_REMOVE2                                     = "delete from index:%s where key = ? and rid = ?";
-  private final static String   QUERY_REMOVE3                                     = "delete from index:%s where rid = ?";
-  private final static String   QUERY_CONTAINS                                    = "select count(*) as size from index:%s where key = ?";
-  private final static String   QUERY_COUNT                                       = "select count(*) as size from index:%s where key = ?";
-  private final static String   QUERY_COUNT_RANGE                                 = "select count(*) as size from index:%s where ";
-  private final static String   QUERY_SIZE                                        = "select count(*) as size from index:%s";
-  private final static String   QUERY_KEY_SIZE                                    = "select count(distinct( key )) as size from index:%s";
-  private final static String   QUERY_KEYS                                        = "select key from index:%s";
-  private final static String   QUERY_REBUILD                                     = "rebuild index %s";
-  private final static String   QUERY_CLEAR                                       = "delete from index:%s";
-  private final static String   QUERY_DROP                                        = "drop index %s";
-  protected final String        databaseName;
-  private final String          wrappedType;
-  private final ORID            rid;
-  protected OIndexDefinition    indexDefinition;
-  protected String              name;
-  protected ODocument           configuration;
-  protected Set<String>         clustersToIndex;
+  private final static String QUERY_PUT         = "insert into index:%s (key,rid) values (?,?)";
+  private final static String QUERY_REMOVE      = "delete from index:%s where key = ?";
+  private final static String QUERY_REMOVE2     = "delete from index:%s where key = ? and rid = ?";
+  private final static String QUERY_REMOVE3     = "delete from index:%s where rid = ?";
+  private final static String QUERY_CONTAINS    = "select count(*) as size from index:%s where key = ?";
+  private final static String QUERY_COUNT       = "select count(*) as size from index:%s where key = ?";
+  private final static String QUERY_COUNT_RANGE = "select count(*) as size from index:%s where ";
+  private final static String QUERY_SIZE        = "select count(*) as size from index:%s";
+  private final static String QUERY_KEY_SIZE    = "select count(distinct( key )) as size from index:%s";
+  private final static String QUERY_KEYS        = "select key from index:%s";
+  private final static String QUERY_REBUILD     = "rebuild index %s";
+  private final static String QUERY_CLEAR       = "delete from index:%s";
+  private final static String QUERY_DROP        = "drop index %s";
+  protected final String           databaseName;
+  private final   String           wrappedType;
+  private final   String           algorithm;
+  private final   ORID             rid;
+  protected       OIndexDefinition indexDefinition;
+  protected       String           name;
+  protected       ODocument        configuration;
+  protected       Set<String>      clustersToIndex;
 
-  public OIndexRemote(final String iName, final String iWrappedType, final ORID iRid, final OIndexDefinition iIndexDefinition,
-      final ODocument iConfiguration, final Set<String> clustersToIndex) {
+  public OIndexRemote(final String iName, final String iWrappedType, final String algorithm, final ORID iRid,
+      final OIndexDefinition iIndexDefinition, final ODocument iConfiguration, final Set<String> clustersToIndex) {
     this.name = iName;
     this.wrappedType = iWrappedType;
+    this.algorithm = algorithm;
     this.rid = iRid;
     this.indexDefinition = iIndexDefinition;
     this.configuration = iConfiguration;
@@ -102,13 +97,13 @@ public abstract class OIndexRemote<T> implements OIndex<T> {
     return this;
   }
 
-  @Override
-  public void deleteWithoutIndexLoad(String indexName) {
-    throw new UnsupportedOperationException("deleteWithoutIndexLoad");
-  }
-
   public String getDatabaseName() {
     return databaseName;
+  }
+
+  @Override
+  public long getRebuildVersion() {
+    throw new UnsupportedOperationException();
   }
 
   public boolean contains(final Object iKey) {
@@ -218,6 +213,23 @@ public abstract class OIndexRemote<T> implements OIndex<T> {
     return indexDefinition != null && indexDefinition.getClassName() != null;
   }
 
+  @Override
+  public int getVersion() {
+    if (configuration == null)
+      return -1;
+
+    final Integer version = configuration.field(OIndexInternal.INDEX_VERSION);
+    if (version != null)
+      return version;
+
+    return -1;
+  }
+
+  @Override
+  public boolean isUnique() {
+    return false;
+  }
+
   public String getName() {
     return name;
   }
@@ -228,6 +240,10 @@ public abstract class OIndexRemote<T> implements OIndex<T> {
 
   public String getType() {
     return wrappedType;
+  }
+
+  public String getAlgorithm() {
+    return algorithm;
   }
 
   public ODocument getConfiguration() {
@@ -257,7 +273,7 @@ public abstract class OIndexRemote<T> implements OIndex<T> {
   public OType[] getKeyTypes() {
     if (indexDefinition != null)
       return indexDefinition.getTypes();
-    return null;
+    return new OType[0];
   }
 
   public Collection<ODocument> getEntries(final Collection<?> iKeys) {
@@ -320,7 +336,7 @@ public abstract class OIndexRemote<T> implements OIndex<T> {
   }
 
   @Override
-  public boolean isRebuiding() {
+  public boolean isRebuilding() {
     return false;
   }
 
@@ -353,6 +369,11 @@ public abstract class OIndexRemote<T> implements OIndex<T> {
   @Override
   public OIndexCursor iterateEntries(Collection<?> keys, boolean ascSortOrder) {
     throw new UnsupportedOperationException("iterateEntries");
+  }
+
+  @Override
+  public int getIndexId() {
+    throw new UnsupportedOperationException("getIndexId");
   }
 
   @Override
@@ -435,7 +456,7 @@ public abstract class OIndexRemote<T> implements OIndex<T> {
       private final Iterator<ODocument> documentIterator = result.iterator();
 
       @Override
-      public Map.Entry<Object, OIdentifiable> next(int prefetchSize) {
+      public Object next(int prefetchSize) {
         if (!documentIterator.hasNext())
           return null;
 
@@ -446,12 +467,18 @@ public abstract class OIndexRemote<T> implements OIndex<T> {
     };
   }
 
+  @Override
+  public int compareTo(OIndex<T> index) {
+    final String name = index.getName();
+    return this.name.compareTo(name);
+  }
+
   protected OCommandRequest formatCommand(final String iTemplate, final Object... iArgs) {
     final String text = String.format(iTemplate, iArgs);
     return new OCommandSQL(text);
   }
 
-  protected ODatabaseComplex<ORecord> getDatabase() {
+  protected ODatabaseDocumentInternal getDatabase() {
     return ODatabaseRecordThreadLocal.INSTANCE.get();
   }
 }

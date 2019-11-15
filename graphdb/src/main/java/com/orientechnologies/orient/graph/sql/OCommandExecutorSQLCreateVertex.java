@@ -1,31 +1,32 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.graph.sql;
 
+import com.orientechnologies.common.util.OPair;
 import com.orientechnologies.orient.core.command.OCommandDistributedReplicateRequest;
 import com.orientechnologies.orient.core.command.OCommandRequest;
 import com.orientechnologies.orient.core.command.OCommandRequestText;
-import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.exception.OCommandExecutionException;
+import com.orientechnologies.orient.core.metadata.OMetadataInternal;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
-import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.sql.OCommandExecutorSQLSetAware;
 import com.orientechnologies.orient.core.sql.OCommandParameters;
 import com.orientechnologies.orient.core.sql.OCommandSQLParsingException;
@@ -33,12 +34,9 @@ import com.orientechnologies.orient.core.sql.OSQLHelper;
 import com.orientechnologies.orient.core.sql.functions.OSQLFunctionRuntime;
 import com.tinkerpop.blueprints.impls.orient.OrientBaseGraph;
 import com.tinkerpop.blueprints.impls.orient.OrientVertex;
+import com.tinkerpop.blueprints.impls.orient.OrientVertexType;
 
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.Set;
+import java.util.*;
 
 /**
  * SQL CREATE VERTEX command.
@@ -46,52 +44,73 @@ import java.util.Set;
  * @author Luca Garulli
  */
 public class OCommandExecutorSQLCreateVertex extends OCommandExecutorSQLSetAware implements OCommandDistributedReplicateRequest {
-  public static final String            NAME = "CREATE VERTEX";
-  private OClass                        clazz;
-  private String                        clusterName;
-  private LinkedHashMap<String, Object> fields;
+  public static final String          NAME = "CREATE VERTEX";
+  private OClass                      clazz;
+  private String                      clusterName;
+  private List<OPair<String, Object>> fields;
 
   @SuppressWarnings("unchecked")
   public OCommandExecutorSQLCreateVertex parse(final OCommandRequest iRequest) {
-    final ODatabaseRecord database = getDatabase();
 
-    init((OCommandRequestText) iRequest);
+    final OCommandRequestText textRequest = (OCommandRequestText) iRequest;
 
-    String className = null;
+    String queryText = textRequest.getText();
+    String originalQuery = queryText;
+    try {
+      queryText = preParse(queryText, iRequest);
+      textRequest.setText(queryText);
 
-    parserRequiredKeyword("CREATE");
-    parserRequiredKeyword("VERTEX");
+      final ODatabaseDocument database = getDatabase();
 
-    String temp = parseOptionalWord(true);
+      init((OCommandRequestText) iRequest);
 
-    while (temp != null) {
-      if (temp.equals("CLUSTER")) {
-        clusterName = parserRequiredWord(false);
+      String className = null;
 
-      } else if (temp.equals(KEYWORD_SET)) {
-        fields = new LinkedHashMap<String, Object>();
-        parseSetFields(fields);
+      parserRequiredKeyword("CREATE");
+      parserRequiredKeyword("VERTEX");
 
-      } else if (temp.equals(KEYWORD_CONTENT)) {
-        parseContent();
+      String temp = parseOptionalWord(true);
 
-      } else if (className == null && temp.length() > 0)
-        className = temp;
+      while (temp != null) {
+        if (temp.equals("CLUSTER")) {
+          clusterName = parserRequiredWord(false);
 
-      temp = parserOptionalWord(true);
-      if (parserIsEnded())
-        break;
+        } else if (temp.equals(KEYWORD_SET)) {
+          fields = new ArrayList<OPair<String, Object>>();
+          parseSetFields(clazz, fields);
+
+        } else if (temp.equals(KEYWORD_CONTENT)) {
+          parseContent();
+
+        } else if (className == null && temp.length() > 0) {
+          className = temp;
+          if (className == null)
+            // ASSIGN DEFAULT CLASS
+            className = OrientVertexType.CLASS_NAME;
+
+          // GET/CHECK CLASS NAME
+          clazz = ((OMetadataInternal) database.getMetadata()).getImmutableSchemaSnapshot().getClass(className);
+          if (clazz == null)
+            throw new OCommandSQLParsingException("Class '" + className + "' was not found");
+        }
+
+        temp = parserOptionalWord(true);
+        if (parserIsEnded())
+          break;
+      }
+
+      if (className == null) {
+        // ASSIGN DEFAULT CLASS
+        className = OrientVertexType.CLASS_NAME;
+
+        // GET/CHECK CLASS NAME
+        clazz = ((OMetadataInternal) database.getMetadata()).getImmutableSchemaSnapshot().getClass(className);
+        if (clazz == null)
+          throw new OCommandSQLParsingException("Class '" + className + "' was not found");
+      }
+    } finally {
+      textRequest.setText(originalQuery);
     }
-
-    if (className == null)
-      // ASSIGN DEFAULT CLASS
-      className = "V";
-
-    // GET/CHECK CLASS NAME
-    clazz = database.getMetadata().getSchema().getClass(className);
-    if (clazz == null)
-      throw new OCommandSQLParsingException("Class " + className + " was not found");
-
     return this;
   }
 
@@ -102,16 +121,17 @@ public class OCommandExecutorSQLCreateVertex extends OCommandExecutorSQLSetAware
     if (clazz == null)
       throw new OCommandExecutionException("Cannot execute the command because it has not been parsed yet");
 
-    return OGraphCommandExecutorSQLFactory.runInTx(new OGraphCommandExecutorSQLFactory.GraphCallBack<ODocument>() {
+    // CREATE VERTEX DOES NOT HAVE TO BE IN TX
+    return OGraphCommandExecutorSQLFactory.runWithAnyGraph(new OGraphCommandExecutorSQLFactory.GraphCallBack<Object>() {
       @Override
-      public ODocument call(OrientBaseGraph graph) {
+      public Object call(final OrientBaseGraph graph) {
         final OrientVertex vertex = graph.addTemporaryVertex(clazz.getName());
 
         if (fields != null)
           // EVALUATE FIELDS
-          for (Entry<String, Object> f : fields.entrySet()) {
+          for (final OPair<String, Object> f : fields) {
             if (f.getValue() instanceof OSQLFunctionRuntime)
-              fields.put(f.getKey(), ((OSQLFunctionRuntime) f.getValue()).getValue(vertex.getRecord(), null, context));
+              f.setValue(((OSQLFunctionRuntime) f.getValue()).getValue(vertex.getRecord(), null, context));
           }
 
         OSQLHelper.bindParameters(vertex.getRecord(), fields, new OCommandParameters(iArgs), context);
@@ -135,9 +155,14 @@ public class OCommandExecutorSQLCreateVertex extends OCommandExecutorSQLSetAware
   }
 
   @Override
+  public QUORUM_TYPE getQuorumType() {
+    return QUORUM_TYPE.WRITE;
+  }
+
+  @Override
   public Set<String> getInvolvedClusters() {
     if (clazz != null)
-      return Collections.singleton(getDatabase().getClusterNameById(clazz.getClusterSelection().getCluster(clazz)));
+      return Collections.singleton(getDatabase().getClusterNameById(clazz.getClusterSelection().getCluster(clazz, null)));
     else if (clusterName != null)
       return getInvolvedClustersOfClusters(Collections.singleton(clusterName));
 

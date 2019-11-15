@@ -1,27 +1,27 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.index;
 
 import com.orientechnologies.common.listener.OProgressListener;
+import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
-import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.metadata.schema.OType;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 
@@ -30,9 +30,8 @@ import java.util.Set;
 
 /**
  * Generic abstract wrapper for indexes. It delegates all the operations to the wrapped OIndex instance.
- * 
+ *
  * @author Luca Garulli
- * 
  */
 public class OIndexAbstractDelegate<T> implements OIndex<T> {
   protected OIndex<T> delegate;
@@ -64,7 +63,13 @@ public class OIndexAbstractDelegate<T> implements OIndex<T> {
   }
 
   public OIndex<T> put(final Object iKey, final OIdentifiable iValue) {
+    checkForKeyType(iKey);
     return delegate.put(iKey, iValue);
+  }
+
+  @Override
+  public long getRebuildVersion() {
+    return delegate.getRebuildVersion();
   }
 
   public boolean remove(final Object key) {
@@ -77,6 +82,20 @@ public class OIndexAbstractDelegate<T> implements OIndex<T> {
 
   public OIndex<T> clear() {
     return delegate.clear();
+  }
+
+  protected void checkForKeyType(final Object iKey) {
+    if (delegate.getDefinition() == null) {
+      // RECOGNIZE THE KEY TYPE AT RUN-TIME
+
+      final OType type = OType.getTypeByClass(iKey.getClass());
+      if (type == null)
+        return;
+
+      OIndexManagerProxy indexManager = ODatabaseRecordThreadLocal.INSTANCE.get().getMetadata().getIndexManager();
+      getInternal().setType(type);
+      indexManager.save();
+    }
   }
 
   @Override
@@ -100,17 +119,17 @@ public class OIndexAbstractDelegate<T> implements OIndex<T> {
   }
 
   @Override
+  public long count(final Object iKey) {
+    return delegate.count(iKey);
+  }
+
+  @Override
   public void flush() {
     delegate.flush();
   }
 
   public OIndex<T> delete() {
     return delegate.delete();
-  }
-
-  @Override
-  public void deleteWithoutIndexLoad(String indexName) {
-    delegate.deleteWithoutIndexLoad(indexName);
   }
 
   public String getName() {
@@ -121,8 +140,18 @@ public class OIndexAbstractDelegate<T> implements OIndex<T> {
     return delegate.getType();
   }
 
+  @Override
+  public String getAlgorithm() {
+    return delegate.getAlgorithm();
+  }
+
   public boolean isAutomatic() {
     return delegate.isAutomatic();
+  }
+
+  @Override
+  public boolean isUnique() {
+    return delegate.isUnique();
   }
 
   public ODocument getConfiguration() {
@@ -134,11 +163,7 @@ public class OIndexAbstractDelegate<T> implements OIndex<T> {
     return delegate.getMetadata();
   }
 
-  public ORID getIdentity() {
-    return delegate.getIdentity();
-  }
-
-	public long rebuild() {
+  public long rebuild() {
     return delegate.rebuild();
   }
 
@@ -206,8 +231,8 @@ public class OIndexAbstractDelegate<T> implements OIndex<T> {
   }
 
   @Override
-  public boolean isRebuiding() {
-    return delegate.isRebuiding();
+  public boolean isRebuilding() {
+    return delegate.isRebuilding();
   }
 
   @Override
@@ -218,6 +243,11 @@ public class OIndexAbstractDelegate<T> implements OIndex<T> {
   @Override
   public Object getLastKey() {
     return delegate.getLastKey();
+  }
+
+  @Override
+  public int getIndexId() {
+    return delegate.getIndexId();
   }
 
   @Override
@@ -233,5 +263,15 @@ public class OIndexAbstractDelegate<T> implements OIndex<T> {
   @Override
   public OIndexKeyCursor keyCursor() {
     return delegate.keyCursor();
+  }
+
+  @Override
+  public int compareTo(OIndex<T> o) {
+    return delegate.compareTo(o);
+  }
+
+  @Override
+  public int getVersion() {
+    return delegate.getVersion();
   }
 }

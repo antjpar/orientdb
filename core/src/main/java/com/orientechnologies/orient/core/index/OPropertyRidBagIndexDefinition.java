@@ -1,22 +1,22 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 
 package com.orientechnologies.orient.core.index;
 
@@ -33,10 +33,12 @@ import java.util.Map;
 /**
  * Index definition for index which is bound to field with type {@link OType#LINKBAG} .
  * 
- * @author Andrey Lomakin <a href="mailto:lomakin.andrey@gmail.com">Andrey Lomakin</a>
+ * @author Andrey Lomakin (a.lomakin-at-orientechnologies.com)
  * @since 1/30/14
  */
-public class OPropertyRidBagIndexDefinition extends OAbstractIndexDefinitionMultiValue implements OIndexDefinitionMultiValue {
+public class OPropertyRidBagIndexDefinition extends OAbstractIndexDefinitionMultiValue {
+  private static final long serialVersionUID = -8315498456603024776L;
+
   public OPropertyRidBagIndexDefinition() {
   }
 
@@ -99,7 +101,7 @@ public class OPropertyRidBagIndexDefinition extends OAbstractIndexDefinitionMult
   }
 
   @Override
-  public String toCreateIndexDDL(String indexName, String indexType) {
-    return createIndexDDLWithoutFieldType(indexName, indexType).toString();
+  public String toCreateIndexDDL(String indexName, String indexType,String engine) {
+    return createIndexDDLWithoutFieldType(indexName, indexType,engine).toString();
   }
 }

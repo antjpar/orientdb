@@ -1,41 +1,34 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.client.remote;
 
-import com.orientechnologies.common.concur.lock.OModificationLock;
 import com.orientechnologies.orient.core.config.OStorageClusterConfiguration;
 import com.orientechnologies.orient.core.conflict.ORecordConflictStrategy;
-import com.orientechnologies.orient.core.id.OClusterPosition;
-import com.orientechnologies.orient.core.id.OClusterPositionFactory;
-import com.orientechnologies.orient.core.storage.OCluster;
-import com.orientechnologies.orient.core.storage.OClusterEntryIterator;
-import com.orientechnologies.orient.core.storage.OPhysicalPosition;
-import com.orientechnologies.orient.core.storage.ORawBuffer;
-import com.orientechnologies.orient.core.storage.OStorage;
-import com.orientechnologies.orient.core.version.ORecordVersion;
+import com.orientechnologies.orient.core.exception.ORecordNotFoundException;
+import com.orientechnologies.orient.core.storage.*;
 
 import java.io.IOException;
 
 /**
  * Remote cluster implementation
- * 
+ *
  * @author Luca Garulli (l.garulli--at--orientechnologies.com)
  */
 public class OClusterRemote implements OCluster {
@@ -48,8 +41,7 @@ public class OClusterRemote implements OCluster {
    * @see com.orientechnologies.orient.core.storage.OCluster#configure(com.orientechnologies.orient.core.storage.OStorage, int,
    * java.lang.String, java.lang.String, int, java.lang.Object[])
    */
-  public void configure(OStorage iStorage, int iId, String iClusterName,
-												Object... iParameters) throws IOException {
+  public void configure(OStorage iStorage, int iId, String iClusterName, Object... iParameters) throws IOException {
     id = iId;
     name = iClusterName;
   }
@@ -86,33 +78,44 @@ public class OClusterRemote implements OCluster {
   }
 
   @Override
-  public OModificationLock getExternalModificationLock() {
-    throw new UnsupportedOperationException("getExternalModificationLock");
-  }
-
-  @Override
   public void close(boolean flush) throws IOException {
   }
 
   @Override
-  public OPhysicalPosition createRecord(byte[] content, ORecordVersion recordVersion, byte recordType) throws IOException {
+  public OPhysicalPosition allocatePosition(byte recordType) throws IOException {
+    throw new UnsupportedOperationException("allocatePosition");
+  }
+
+  @Override
+  public OPhysicalPosition createRecord(byte[] content, int recordVersion, byte recordType, OPhysicalPosition allocatedPosition)
+      throws IOException {
     throw new UnsupportedOperationException("createRecord");
   }
 
   @Override
-  public boolean deleteRecord(OClusterPosition clusterPosition) throws IOException {
+  public boolean deleteRecord(long clusterPosition) throws IOException {
     throw new UnsupportedOperationException("deleteRecord");
   }
 
   @Override
-  public void updateRecord(OClusterPosition clusterPosition, byte[] content, ORecordVersion recordVersion, byte recordType)
-      throws IOException {
+  public void updateRecord(long clusterPosition, byte[] content, int recordVersion, byte recordType) throws IOException {
     throw new UnsupportedOperationException("updateRecord");
   }
 
   @Override
-  public ORawBuffer readRecord(OClusterPosition clusterPosition) throws IOException {
+  public void recycleRecord(long clusterPosition) throws IOException {
+    throw new UnsupportedOperationException("recyclePosition");
+  }
+
+  @Override
+  public ORawBuffer readRecord(long clusterPosition, boolean prefetchRecords) throws IOException {
     throw new UnsupportedOperationException("readRecord");
+  }
+
+  @Override
+  public ORawBuffer readRecordIfVersionIsNotLatest(long clusterPosition, int recordVersion)
+      throws IOException, ORecordNotFoundException {
+    throw new UnsupportedOperationException("readRecordIfVersionIsNotLatest");
   }
 
   @Override
@@ -123,30 +126,24 @@ public class OClusterRemote implements OCluster {
   public void delete() throws IOException {
   }
 
-  public void set(ATTRIBUTES iAttribute, Object iValue) throws IOException {
+  public Object set(ATTRIBUTES iAttribute, Object iValue) throws IOException {
+    return null;
+  }
+
+  @Override
+  public String encryption() {
+    throw new UnsupportedOperationException("encryption");
   }
 
   public void truncate() throws IOException {
   }
 
-  public boolean addPhysicalPosition(OPhysicalPosition iPPosition) throws IOException {
-    return false;
+  @Override
+  public void compact() throws IOException {
   }
 
   public OPhysicalPosition getPhysicalPosition(OPhysicalPosition iPPosition) throws IOException {
     return null;
-  }
-
-  public void updateDataSegmentPosition(OClusterPosition iPosition, int iDataSegmentId, long iDataPosition) throws IOException {
-  }
-
-  public void removePhysicalPosition(OClusterPosition iPosition) throws IOException {
-  }
-
-  public void updateRecordType(OClusterPosition iPosition, byte iRecordType) throws IOException {
-  }
-
-  public void updateVersion(OClusterPosition iPosition, ORecordVersion iVersion) throws IOException {
   }
 
   public long getEntries() {
@@ -159,21 +156,23 @@ public class OClusterRemote implements OCluster {
   }
 
   @Override
-  public void convertToTombstone(OClusterPosition iPosition) throws IOException {
-    throw new UnsupportedOperationException("convertToTombstone()");
+  public long getFirstPosition() {
+    return 0;
   }
 
   @Override
-  public boolean hasTombstonesSupport() {
-    throw new UnsupportedOperationException("hasTombstonesSupport()");
+  public long getLastPosition() {
+    return 0;
   }
 
-  public OClusterPosition getFirstPosition() {
-    return OClusterPositionFactory.INSTANCE.valueOf(0);
+  @Override
+  public long getNextPosition() throws IOException {
+    return 0;
   }
 
-  public OClusterPosition getLastPosition() {
-    return OClusterPositionFactory.INSTANCE.valueOf(0);
+  @Override
+  public String getFileName() {
+    throw new UnsupportedOperationException("getFileName()");
   }
 
   public int getId() {
@@ -181,14 +180,6 @@ public class OClusterRemote implements OCluster {
   }
 
   public void synch() throws IOException {
-  }
-
-  public void setSoftlyClosed(boolean softlyClosed) throws IOException {
-  }
-
-  @Override
-  public boolean wasSoftlyClosed() throws IOException {
-    return true;
   }
 
   public String getName() {
@@ -200,6 +191,11 @@ public class OClusterRemote implements OCluster {
   }
 
   public boolean isHashBased() {
+    return false;
+  }
+
+  @Override
+  public boolean isSystemCluster() {
     return false;
   }
 
@@ -228,11 +224,6 @@ public class OClusterRemote implements OCluster {
   }
 
   @Override
-  public boolean useWal() {
-    throw new UnsupportedOperationException("useWal()");
-  }
-
-  @Override
   public float recordGrowFactor() {
     throw new UnsupportedOperationException("recordGrowFactor()");
   }
@@ -248,12 +239,17 @@ public class OClusterRemote implements OCluster {
   }
 
   @Override
-  public boolean hideRecord(OClusterPosition position) {
+  public boolean hideRecord(long position) {
     throw new UnsupportedOperationException("Operation is not supported for given cluster implementation");
   }
 
   @Override
   public ORecordConflictStrategy getRecordConflictStrategy() {
     return null;
+  }
+
+  @Override
+  public void acquireAtomicExclusiveLock() {
+    throw new UnsupportedOperationException("remote cluster doesn't support atomic locking");
   }
 }

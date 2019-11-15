@@ -15,20 +15,19 @@
  */
 package com.orientechnologies.orient.test.database.auto;
 
-import java.util.concurrent.Callable;
-import java.util.concurrent.atomic.AtomicLong;
-
+import com.orientechnologies.common.concur.ONeedRetryException;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
+import com.orientechnologies.orient.core.sql.OCommandSQL;
+import com.orientechnologies.orient.test.ConcurrentTestHelper;
+import com.orientechnologies.orient.test.TestFactory;
 import org.testng.Assert;
-import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Optional;
 import org.testng.annotations.Parameters;
 import org.testng.annotations.Test;
 
-import com.orientechnologies.common.concur.ONeedRetryException;
-import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
-import com.orientechnologies.orient.core.sql.OCommandSQL;
-import com.orientechnologies.orient.test.ConcurrentTestHelper;
+import java.util.concurrent.Callable;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Test
 public class ConcurrentQueriesTest extends DocumentDBBaseTest {
@@ -94,17 +93,17 @@ public class ConcurrentQueriesTest extends DocumentDBBaseTest {
 
   @Test
   public void concurrentCommands() throws Exception {
-    System.out.println("Spanning " + THREADS + " threads...");
+//    System.out.println("Spanning " + THREADS + " threads...");
 
-    ConcurrentTestHelper.test(THREADS, new ConcurrentTestHelper.TestFactory<Void>() {
+    ConcurrentTestHelper.test(THREADS, new TestFactory<Void>() {
       @Override
       public Callable<Void> createWorker() {
         return new CommandExecutor(url);
       }
     });
 
-    System.out.println("Done! Total queries executed in parallel: " + counter.get() + " average retries: "
-        + ((float) totalRetries.get() / (float) counter.get()));
+//    System.out.println("Done! Total queries executed in parallel: " + counter.get() + " average retries: "
+//        + ((float) totalRetries.get() / (float) counter.get()));
 
     Assert.assertEquals(counter.get(), CYCLES * THREADS);
   }

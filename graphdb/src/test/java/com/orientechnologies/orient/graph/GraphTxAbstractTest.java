@@ -20,15 +20,12 @@
 
 package com.orientechnologies.orient.graph;
 
-import com.orientechnologies.common.io.OFileUtils;
-import com.orientechnologies.orient.core.Orient;
-import com.orientechnologies.orient.core.storage.OStorage;
-import com.tinkerpop.blueprints.impls.orient.OrientGraph;
-
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 
-import java.io.File;
+import com.tinkerpop.blueprints.impls.orient.OrientGraph;
+
+import java.util.Locale;
 
 /**
  * Base class for tests against transactional Graphs.
@@ -43,7 +40,7 @@ public abstract class GraphTxAbstractTest {
   }
 
   public static ENV getEnvironment() {
-    String envName = System.getProperty("orientdb.test.env", "dev").toUpperCase();
+    String envName = System.getProperty("orientdb.test.env", "dev").toUpperCase(Locale.ENGLISH);
     ENV result = null;
     try {
       result = ENV.valueOf(envName);
@@ -63,19 +60,36 @@ public abstract class GraphTxAbstractTest {
     return "plocal";
   }
 
-  @BeforeClass
-  public static void beforeClass() {
-    final String dbName = GraphTxAbstractTest.class.getSimpleName();
-    final String storageType = getStorageType();
-    final String buildDirectory = System.getProperty("buildDirectory", ".");
-    graph = new OrientGraph(storageType + ":" + buildDirectory + "/" + dbName);
-    graph.drop();
-    graph = new OrientGraph(storageType + ":" + buildDirectory + "/" + dbName);
+  public static void init(final String dbName) {
+    if (graph == null) {
+      final String storageType = getStorageType();
+      final String buildDirectory = System.getProperty("buildDirectory", ".");
+
+      final String url = System.getProperty("url");
+
+      if (url != null)
+        graph = new OrientGraph(url);
+      else
+        graph = new OrientGraph(storageType + ":" + buildDirectory + "/" + dbName);
+
+      if (!graph.getRawGraph().getURL().startsWith("remote:")) {
+        graph.drop();
+
+        if (url != null)
+          graph = new OrientGraph(url);
+        else
+          graph = new OrientGraph(storageType + ":" + buildDirectory + "/" + dbName);
+      }
+    }
 
   }
 
   @AfterClass
   public static void afterClass() throws Exception {
-    graph.shutdown();
+    if (graph != null) {
+      graph.shutdown();
+      graph = null;
+    }
   }
+
 }

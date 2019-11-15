@@ -1,22 +1,22 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.command.script;
 
 import java.util.Collection;
@@ -25,28 +25,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 
-import com.orientechnologies.orient.core.command.OBasicCommandContext;
+import com.orientechnologies.common.util.OCommonConst;
 import com.orientechnologies.orient.core.db.ODatabase;
 import com.orientechnologies.orient.core.db.ODatabase.ATTRIBUTES;
+import com.orientechnologies.orient.core.db.ODatabase.OPERATION_MODE;
 import com.orientechnologies.orient.core.db.ODatabase.STATUS;
-import com.orientechnologies.orient.core.db.ODatabaseComplex;
-import com.orientechnologies.orient.core.db.ODatabaseComplex.OPERATION_MODE;
-import com.orientechnologies.orient.core.db.ODatabaseComplexInternal;
+import com.orientechnologies.orient.core.db.ODatabaseInternal;
+import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
-import com.orientechnologies.orient.core.db.record.ODatabaseRecord;
-import com.orientechnologies.orient.core.db.record.ODatabaseRecordTx;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
 import com.orientechnologies.orient.core.dictionary.ODictionary;
 import com.orientechnologies.orient.core.id.ORID;
+import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.index.OIndex;
 import com.orientechnologies.orient.core.intent.OIntent;
 import com.orientechnologies.orient.core.iterator.ORecordIteratorClass;
 import com.orientechnologies.orient.core.iterator.ORecordIteratorCluster;
 import com.orientechnologies.orient.core.metadata.OMetadata;
+import com.orientechnologies.orient.core.metadata.security.OSecurityUser;
 import com.orientechnologies.orient.core.metadata.security.OUser;
-import com.orientechnologies.orient.core.processor.OComposableProcessor;
-import com.orientechnologies.orient.core.processor.OProcessException;
-import com.orientechnologies.orient.core.processor.OProcessorManager;
 import com.orientechnologies.orient.core.record.ORecord;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.sql.OCommandSQL;
@@ -54,7 +51,6 @@ import com.orientechnologies.orient.core.sql.query.OSQLQuery;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
 import com.orientechnologies.orient.core.storage.ORecordCallback;
 import com.orientechnologies.orient.core.tx.OTransaction;
-import com.orientechnologies.orient.core.version.ORecordVersion;
 
 /**
  * Document Database wrapper class to use from scripts.
@@ -68,10 +64,6 @@ public class OScriptDocumentDatabaseWrapper {
 
   public OScriptDocumentDatabaseWrapper(final ODatabaseDocumentTx database) {
     this.database = database;
-  }
-
-  public OScriptDocumentDatabaseWrapper(final ODatabaseRecordTx database) {
-    this.database = new ODatabaseDocumentTx(database);
   }
 
   public OScriptDocumentDatabaseWrapper(final String iURL) {
@@ -95,7 +87,7 @@ public class OScriptDocumentDatabaseWrapper {
   public OIdentifiable[] query(final OSQLQuery iQuery, final Object... iParameters) {
     final List<OIdentifiable> res = database.query(iQuery, convertParameters(iParameters));
     if (res == null)
-      return new OIdentifiable[] {};
+      return OCommonConst.EMPTY_IDENTIFIABLE_ARRAY;
     return res.toArray(new OIdentifiable[res.size()]);
   }
 
@@ -123,29 +115,6 @@ public class OScriptDocumentDatabaseWrapper {
       final List<OIdentifiable> list = (List<OIdentifiable>) res;
       return list.toArray(new OIdentifiable[list.size()]);
     }
-    return res;
-  }
-
-  public Object process(final String iType, final String iName, final Object... iParameters) {
-    final OComposableProcessor process = (OComposableProcessor) OProcessorManager.getInstance().get(iType);
-    if (process == null)
-      throw new OProcessException("Process type '" + iType + "' is undefined");
-
-    final OBasicCommandContext context = new OBasicCommandContext();
-    if (iParameters != null) {
-      int argIdx = 0;
-      for (Object p : iParameters)
-        context.setVariable("arg" + (argIdx++), p);
-    }
-
-    Object res;
-
-    try {
-      res = process.processFromFile(iName, context, false);
-    } catch (Exception e) {
-      throw new OProcessException("Error on processing '" + iName + "' field of '" + getName() + "' block", e);
-    }
-
     return res;
   }
 
@@ -250,7 +219,7 @@ public class OScriptDocumentDatabaseWrapper {
     return database.getTransaction();
   }
 
-  public ODatabaseComplex<ORecord> begin() {
+  public ODatabase<ORecord> begin() {
     return database.begin();
   }
 
@@ -266,7 +235,7 @@ public class OScriptDocumentDatabaseWrapper {
     return database.getClusterNameById(iClusterId);
   }
 
-  public <RET extends ODatabaseComplex<?>> RET setMVCC(boolean iValue) {
+  public <RET extends ODatabase<?>> RET setMVCC(boolean iValue) {
     return (RET) database.setMVCC(iValue);
   }
 
@@ -282,11 +251,11 @@ public class OScriptDocumentDatabaseWrapper {
     return database.getClusterRecordSizeByName(iClusterName);
   }
 
-  public <RET extends ODatabaseRecord> RET setValidationEnabled(boolean iValue) {
+  public <RET extends ODatabaseDocument> RET setValidationEnabled(boolean iValue) {
     return (RET) database.setValidationEnabled(iValue);
   }
 
-  public OUser getUser() {
+  public OSecurityUser getUser() {
     return database.getUser();
   }
 
@@ -295,7 +264,7 @@ public class OScriptDocumentDatabaseWrapper {
   }
 
   public ODocument save(ORecord iRecord, OPERATION_MODE iMode, boolean iForceCreate,
-      final ORecordCallback<? extends Number> iRecordCreatedCallback, ORecordCallback<ORecordVersion> iRecordUpdatedCallback) {
+      final ORecordCallback<? extends Number> iRecordCreatedCallback, ORecordCallback<Integer> iRecordUpdatedCallback) {
     return database.save(iRecord, iMode, iForceCreate, iRecordCreatedCallback, iRecordUpdatedCallback);
   }
 
@@ -311,7 +280,7 @@ public class OScriptDocumentDatabaseWrapper {
     return database.getRecordType();
   }
 
-  public ODatabaseComplex<ORecord> delete(ORID iRid) {
+  public ODatabase<ORecord> delete(ORID iRid) {
     return database.delete(iRid);
   }
 
@@ -335,6 +304,10 @@ public class OScriptDocumentDatabaseWrapper {
     return database.getDefaultClusterId();
   }
 
+  public <RET extends ORecord> RET load(final String iRidAsString) {
+    return (RET) database.load(new ORecordId(iRidAsString));
+  }
+
   public <RET extends ORecord> RET load(ORecord iRecord) {
     return (RET) database.load(iRecord);
   }
@@ -351,7 +324,7 @@ public class OScriptDocumentDatabaseWrapper {
     return (RET) database.load(iRecord, iFetchPlan, iIgnoreCache);
   }
 
-  public ODatabaseComplex<?> setDatabaseOwner(ODatabaseComplexInternal<?> iOwner) {
+  public ODatabase<?> setDatabaseOwner(ODatabaseInternal<?> iOwner) {
     return database.setDatabaseOwner(iOwner);
   }
 
@@ -395,7 +368,7 @@ public class OScriptDocumentDatabaseWrapper {
     return database.isRetainRecords();
   }
 
-  public ODatabaseRecord setRetainRecords(boolean iValue) {
+  public ODatabaseDocument setRetainRecords(boolean iValue) {
     return database.setRetainRecords(iValue);
   }
 
@@ -403,12 +376,8 @@ public class OScriptDocumentDatabaseWrapper {
     return database.getSize();
   }
 
-  public ORecord getRecordByUserObject(Object iUserObject, boolean iCreateIfNotAvailable) {
-    return database.getRecordByUserObject(iUserObject, iCreateIfNotAvailable);
-  }
-
   public ODocument save(ORecord iRecord, String iClusterName, OPERATION_MODE iMode, boolean iForceCreate,
-      final ORecordCallback<? extends Number> iRecordCreatedCallback, ORecordCallback<ORecordVersion> iRecordUpdatedCallback) {
+      final ORecordCallback<? extends Number> iRecordCreatedCallback, ORecordCallback<Integer> iRecordUpdatedCallback) {
     return database.save(iRecord, iClusterName, iMode, iForceCreate, iRecordCreatedCallback, iRecordUpdatedCallback);
   }
 
@@ -420,11 +389,11 @@ public class OScriptDocumentDatabaseWrapper {
     return database.countClass(iClassName);
   }
 
-  public ODatabaseComplex<ORecord> commit() {
+  public ODatabase<ORecord> commit() {
     return database.commit();
   }
 
-  public ODatabaseComplex<ORecord> rollback() {
+  public ODatabase<ORecord> rollback() {
     return database.rollback();
   }
 

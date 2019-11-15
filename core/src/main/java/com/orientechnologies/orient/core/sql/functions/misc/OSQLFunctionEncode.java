@@ -18,9 +18,10 @@ package com.orientechnologies.orient.core.sql.functions.misc;
 import com.orientechnologies.common.exception.OException;
 import com.orientechnologies.orient.core.command.OCommandContext;
 import com.orientechnologies.orient.core.db.record.OIdentifiable;
+import com.orientechnologies.orient.core.exception.ODatabaseException;
 import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.record.ORecord;
-import com.orientechnologies.orient.core.record.impl.ORecordBytes;
+import com.orientechnologies.orient.core.record.impl.OBlob;
 import com.orientechnologies.orient.core.serialization.OBase64Utils;
 import com.orientechnologies.orient.core.serialization.OSerializableStream;
 import com.orientechnologies.orient.core.sql.functions.OSQLFunctionAbstract;
@@ -53,8 +54,8 @@ public class OSQLFunctionEncode extends OSQLFunctionAbstract {
       data = (byte[]) candidate;
     } else if (candidate instanceof ORecordId) {
       final ORecord rec = ((ORecordId) candidate).getRecord();
-      if (rec instanceof ORecordBytes) {
-        data = ((ORecordBytes) rec).toStream();
+      if (rec instanceof OBlob) {
+        data = ((OBlob) rec).toStream();
       }
     } else if (candidate instanceof OSerializableStream) {
       data = ((OSerializableStream) candidate).toStream();
@@ -67,7 +68,7 @@ public class OSQLFunctionEncode extends OSQLFunctionAbstract {
     if (FORMAT_BASE64.equalsIgnoreCase(format)) {
       return OBase64Utils.encodeBytes(data);
     } else {
-      throw new OException("unknowned format :" + format);
+      throw new ODatabaseException("unknowned format :" + format);
     }
   }
 

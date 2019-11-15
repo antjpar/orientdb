@@ -1,105 +1,292 @@
 /*
-     *
-     *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-     *  *
-     *  *  Licensed under the Apache License, Version 2.0 (the "License");
-     *  *  you may not use this file except in compliance with the License.
-     *  *  You may obtain a copy of the License at
-     *  *
-     *  *       http://www.apache.org/licenses/LICENSE-2.0
-     *  *
-     *  *  Unless required by applicable law or agreed to in writing, software
-     *  *  distributed under the License is distributed on an "AS IS" BASIS,
-     *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-     *  *  See the License for the specific language governing permissions and
-     *  *  limitations under the License.
-     *  *
-     *  * For more information: http://www.orientechnologies.com
-     *
-     */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.server.distributed;
 
+import com.orientechnologies.common.util.OCallable;
+import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
+import com.orientechnologies.orient.core.db.ODatabaseInternal;
 import com.orientechnologies.orient.core.record.impl.ODocument;
- import com.orientechnologies.orient.server.distributed.ODistributedRequest.EXECUTION_MODE;
- import com.orientechnologies.orient.server.distributed.conflict.OReplicationConflictResolver;
- import com.orientechnologies.orient.server.distributed.task.OAbstractRemoteTask;
+import com.orientechnologies.orient.core.storage.OStorage;
+import com.orientechnologies.orient.server.OServer;
+import com.orientechnologies.orient.server.distributed.ODistributedRequest.EXECUTION_MODE;
+import com.orientechnologies.orient.server.distributed.conflict.ODistributedConflictResolverFactory;
+import com.orientechnologies.orient.server.distributed.task.ORemoteTask;
 
- import java.util.Collection;
- import java.util.Map;
- import java.util.concurrent.locks.Lock;
+import java.io.File;
+import java.io.IOException;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
-  * Server cluster interface to abstract cluster behavior.
-  *
-  * @author Luca Garulli (l.garulli--at--orientechnologies.com)
-  *
-  */
- public interface ODistributedServerManager {
+ * Server cluster interface to abstract cluster behavior.
+ *
+ * @author Luca Garulli (l.garulli--at--orientechnologies.com)
+ */
+public interface ODistributedServerManager {
+  String FILE_DISTRIBUTED_DB_CONFIG = "distributed-config.json";
 
-   public enum NODE_STATUS {
-     OFFLINE, STARTING, ONLINE, SHUTDOWNING
-   };
+  /**
+   * Server status.
+   */
+  enum NODE_STATUS {
+    /**
+     * The server was never started or the shutdown is complete.
+     */
+    OFFLINE,
 
-   public enum DB_STATUS {
-     OFFLINE, SYNCHRONIZING, ONLINE
-   };
+    /**
+     * The server is STARTING.
+     */
+    STARTING,
 
-   public boolean isEnabled();
+    /**
+     * The server is ONLINE.
+     */
+    ONLINE,
 
-   public Map<String, Object> getConfigurationMap();
+    /**
+     * The server starts to merge to another cluster.
+     */
+    MERGING,
 
-   public long getLastClusterChangeOn();
+    /**
+     * The server is shutting down.
+     */
+    SHUTTINGDOWN
+  }
 
-   public NODE_STATUS getNodeStatus();
+  ;
 
-   public void setNodeStatus(NODE_STATUS iStatus);
+  /**
+   * Database status.
+   */
+  enum DB_STATUS {
+    /**
+     * The database is not installed. In this status the server does not receive any request.
+     */
+    NOT_AVAILABLE,
 
-   public boolean checkNodeStatus(NODE_STATUS string);
+    /**
+     * The database has been put in OFFLINE status. In this status the server does not receive any request.
+     */
+    OFFLINE,
 
-   public DB_STATUS getDatabaseStatus(final String iNode, final String iDatabaseName);
+    /**
+     * The database is in synchronization status. This status is set when a synchronization (full or delta) is requested. The node
+     * tha accepts the synchronization, is in SYNCHRONIZING mode too. During this status the server receive requests that will be
+     * enqueue until the database is ready. Server in SYNCHRONIZING status do not concur in the quorum.
+     */
+    SYNCHRONIZING,
 
-   public void setDatabaseStatus(final String iNode, final String iDatabaseName, DB_STATUS iStatus);
+    /**
+     * The database is ONLINE as fully operative. During this status the server is considered in the quorum (if the server's role is
+     * MASTER)
+     */
+    ONLINE,
 
-   public ODistributedMessageService getMessageService();
+    /**
+     * The database is ONLINE, but is not involved in the quorum.
+     */
+    BACKUP
+  }
 
-   public void updateLastClusterChange();
+  /**
+   * Checks the node status if it's one of the statuses received as argument.
+   *
+   * @param iNodeName     Node name
+   * @param iDatabaseName Database name
+   * @param statuses      vararg of statuses
+   *
+   * @return true if the node's status is equals to one of the passed statuses, otherwise false
+   */
+  boolean isNodeStatusEqualsTo(String iNodeName, String iDatabaseName, DB_STATUS... statuses);
 
-   public boolean isNodeAvailable(final String iNodeName, String databaseName);
+  boolean isNodeAvailable(String iNodeName);
 
-   public boolean isOffline();
+  Set<String> getAvailableNodeNames(String databaseName);
 
-   public String getLocalNodeId();
+  @Deprecated
+  String getCoordinatorServer();
 
-   public String getLocalNodeName();
+  String getLockManagerServer();
 
-   public ODocument getClusterConfiguration();
+  void waitUntilNodeOnline() throws InterruptedException;
 
-   public ODocument getNodeConfigurationById(String iNode);
+  void waitUntilNodeOnline(String nodeName, String databaseName) throws InterruptedException;
 
-   public ODocument getLocalNodeConfiguration();
+  OStorage getStorage(String databaseName);
 
-   /**
-    * Returns a time taking care about the offset with the cluster time. This allows to have a quite precise idea about information
-    * on date times, such as logs to determine the youngest in case of conflict.
-    *
-    * @return
-    */
-   public long getDistributedTime(long iTme);
+  OServer getServerInstance();
 
-   /**
-    * Gets a distributed lock
-    *
-    * @param iLockName
-    *          name of the lock
-    * @return
-    */
-   public Lock getLock(String iLockName);
+  boolean isEnabled();
 
-   public Class<? extends OReplicationConflictResolver> getConfictResolverClass();
+  ODistributedServerManager registerLifecycleListener(ODistributedLifecycleListener iListener);
 
-   public ODistributedConfiguration getDatabaseConfiguration(String iDatabaseName);
+  ODistributedServerManager unregisterLifecycleListener(ODistributedLifecycleListener iListener);
 
-   public Object sendRequest(String iDatabaseName, Collection<String> iClusterNames, Collection<String> iTargetNodeNames, OAbstractRemoteTask iTask, EXECUTION_MODE iExecutionMode);
+  Object executeOnLocalNode(ODistributedRequestId reqId, ORemoteTask task, ODatabaseDocumentInternal database);
 
-   public ODocument getStats();
- }
+  ORemoteServerController getRemoteServer(String nodeName) throws IOException;
+
+  Map<String, Object> getConfigurationMap();
+
+  long getLastClusterChangeOn();
+
+  NODE_STATUS getNodeStatus();
+
+  void setNodeStatus(NODE_STATUS iStatus);
+
+  boolean checkNodeStatus(NODE_STATUS string);
+
+  void removeServer(String nodeLeftName, boolean removeOnlyDynamicServers);
+
+  DB_STATUS getDatabaseStatus(String iNode, String iDatabaseName);
+
+  void setDatabaseStatus(String iNode, String iDatabaseName, DB_STATUS iStatus);
+
+  int getNodesWithStatus(Collection<String> iNodes, String databaseName, DB_STATUS... statuses);
+
+  ODistributedMessageService getMessageService();
+
+  ODistributedStrategy getDistributedStrategy();
+
+  void setDistributedStrategy(ODistributedStrategy streatgy);
+
+  boolean updateCachedDatabaseConfiguration(String iDatabaseName, OModifiableDistributedConfiguration cfg,
+      boolean iDeployToCluster);
+
+  long getNextMessageIdCounter();
+
+  String getNodeUuidByName(String name);
+
+  void updateLastClusterChange();
+
+  void reassignClustersOwnership(String iNode, String databaseName, OModifiableDistributedConfiguration cfg,
+      boolean canCreateNewClusters);
+
+  /**
+   * Available means not OFFLINE, so ONLINE or SYNCHRONIZING.
+   */
+  boolean isNodeAvailable(String iNodeName, String databaseName);
+
+  /**
+   * Returns true if the node status is ONLINE.
+   */
+  boolean isNodeOnline(String iNodeName, String databaseName);
+
+  int getTotalNodes(String iDatabaseName);
+
+  int getAvailableNodes(String iDatabaseName);
+
+  int getAvailableNodes(Collection<String> iNodes, String databaseName);
+
+  boolean isOffline();
+
+  int getLocalNodeId();
+
+  String getLocalNodeName();
+
+  ODocument getClusterConfiguration();
+
+  String getNodeNameById(int id);
+
+  int getNodeIdByName(String node);
+
+  ODocument getNodeConfigurationByUuid(String iNode, boolean useCache);
+
+  ODocument getLocalNodeConfiguration();
+
+  void propagateSchemaChanges(ODatabaseInternal iStorage);
+
+  ODistributedConfiguration getDatabaseConfiguration(String iDatabaseName);
+
+  ODistributedConfiguration getDatabaseConfiguration(String iDatabaseName, boolean createIfNotPresent);
+
+  /**
+   * Sends a distributed request against multiple servers.
+   *
+   * @param iDatabaseName
+   * @param iClusterNames
+   * @param iTargetNodeNames
+   * @param iTask
+   * @param messageId          Message Id as long
+   * @param iExecutionMode
+   * @param localResult        It's the result of the request executed locally
+   * @param iAfterSentCallback
+   * @param endCallback
+   *
+   * @return
+   */
+  ODistributedResponse sendRequest(String iDatabaseName, Collection<String> iClusterNames, Collection<String> iTargetNodeNames,
+      ORemoteTask iTask, long messageId, EXECUTION_MODE iExecutionMode, Object localResult,
+      OCallable<Void, ODistributedRequestId> iAfterSentCallback, OCallable<Void, ODistributedResponseManager> endCallback);
+
+  ODocument getStats();
+
+  Throwable convertException(Throwable original);
+
+  List<String> getOnlineNodes(String iDatabaseName);
+
+  boolean installDatabase(boolean iStartup, String databaseName, boolean forceDeployment, boolean tryWithDeltaFirst);
+
+  /**
+   * Returns the task factory manager. During first connect the minor version of the protocol is used.
+   */
+  ORemoteTaskFactoryManager getTaskFactoryManager();
+
+  Set<String> getActiveServers();
+
+  ODistributedConflictResolverFactory getConflictResolverFactory();
+
+  /**
+   * Returns the cluster-wide time in milliseconds.
+   * <p/>
+   * Cluster tries to keep a cluster-wide time which might be different than the member's own system time. Cluster-wide time is
+   * -almost- the same on all members of the cluster.
+   */
+  long getClusterTime();
+
+  File getDefaultDatabaseConfigFile();
+
+  ODistributedLockManager getLockManagerRequester();
+
+  ODistributedLockManager getLockManagerExecutor();
+
+  /**
+   * Executes an operation protected by a distributed lock (one per database).
+   *
+   * @param <T>            Return type
+   * @param databaseName   Database name
+   * @param timeoutLocking
+   * @param iCallback      Operation @return The operation's result of type T
+   */
+  <T> T executeInDistributedDatabaseLock(String databaseName, long timeoutLocking, OModifiableDistributedConfiguration lastCfg,
+      OCallable<T, OModifiableDistributedConfiguration> iCallback);
+
+  /**
+   * Returns true if the quorum is present in terms of number of available nodes for full replication only. With sharding, instead,
+   * the quorum may depend on the involved clusters.
+   *
+   * @return
+   */
+  boolean isWriteQuorumPresent(String databaseName);
+}

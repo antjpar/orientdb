@@ -1,27 +1,31 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.server.network.protocol.http.command.delete;
 
+import com.orientechnologies.orient.core.db.document.ODatabaseDocument;
 import com.orientechnologies.orient.core.db.document.ODatabaseDocumentTx;
 import com.orientechnologies.orient.core.id.ORecordId;
+import com.orientechnologies.orient.core.metadata.schema.OClass;
+import com.orientechnologies.orient.core.record.ORecordInternal;
 import com.orientechnologies.orient.core.record.impl.ODocument;
+import com.orientechnologies.orient.core.sql.OCommandSQL;
 import com.orientechnologies.orient.server.network.protocol.http.OHttpRequest;
 import com.orientechnologies.orient.server.network.protocol.http.OHttpResponse;
 import com.orientechnologies.orient.server.network.protocol.http.OHttpUtils;
@@ -32,7 +36,7 @@ public class OServerCommandDeleteDocument extends OServerCommandDocumentAbstract
 
   @Override
   public boolean execute(final OHttpRequest iRequest, OHttpResponse iResponse) throws Exception {
-    ODatabaseDocumentTx db = null;
+    ODatabaseDocument db = null;
 
     try {
       final String[] urlParts = checkSyntax(iRequest.url, 3, "Syntax error: document/<database>/<record-id>");
@@ -58,14 +62,27 @@ public class OServerCommandDeleteDocument extends OServerCommandDocumentAbstract
       else {
         if (iRequest.ifMatch != null)
           // USE THE IF-MATCH HTTP HEADER AS VERSION
-          doc.getRecordVersion().getSerializer().fromString(iRequest.ifMatch, doc.getRecordVersion());
+          ORecordInternal.setVersion(doc, Integer.parseInt(iRequest.ifMatch));
         else
           // IGNORE THE VERSION
-          doc.getRecordVersion().disable();
+          ORecordInternal.setVersion(doc, -1);
       }
-      doc.delete();
 
-      iResponse.send(OHttpUtils.STATUS_OK_CODE, "OK", OHttpUtils.CONTENT_TEXT_PLAIN, null, null);
+      final OClass cls = doc.getSchemaClass();
+      if (cls != null) {
+        if (cls.isSubClassOf("V"))
+          // DELETE IT AS VERTEX
+          db.command(new OCommandSQL("DELETE VERTEX " + recordId)).execute();
+        else
+          if (cls.isSubClassOf("E"))
+            // DELETE IT AS EDGE
+            db.command(new OCommandSQL("DELETE EDGE " + recordId)).execute();
+        else
+          doc.delete();
+      } else
+        doc.delete();
+
+      iResponse.send(OHttpUtils.STATUS_OK_NOCONTENT_CODE, "OK", OHttpUtils.CONTENT_TEXT_PLAIN, null, null);
 
     } finally {
       if (db != null)

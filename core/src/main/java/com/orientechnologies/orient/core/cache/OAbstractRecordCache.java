@@ -19,40 +19,41 @@
   */
 package com.orientechnologies.orient.core.cache;
 
-import java.util.HashSet;
-import java.util.Set;
-
 import com.orientechnologies.common.profiler.OAbstractProfiler.OProfilerHookValue;
-import com.orientechnologies.common.profiler.OProfilerMBean.METRIC_TYPE;
+import com.orientechnologies.common.profiler.OProfiler.METRIC_TYPE;
 import com.orientechnologies.orient.core.Orient;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.record.ORecord;
 
+import java.util.HashSet;
+import java.util.Set;
+
 /**
- * Cache of documents. Delegates real work on storing to {@link OCache} implementation passed at creation time leaving only DB
+ * Cache of documents. Delegates real work on storing to {@link ORecordCache} implementation passed at creation time leaving only DB
  * specific functionality
  * 
  * @author Luca Garulli
  */
 public abstract class OAbstractRecordCache {
-  protected OCache underlying;
+  protected ORecordCache underlying;
   protected String profilerPrefix         = "noname";
   protected String profilerMetadataPrefix = "noname";
   protected int    excludedCluster        = -1;
 
   /**
    * Create cache backed by given implementation
-   * 
+   *
    * @param impl
    *          actual implementation of cache
    */
-  public OAbstractRecordCache(final OCache impl) {
+  public OAbstractRecordCache(final ORecordCache impl) {
     underlying = impl;
   }
 
+
   /**
    * Tell whether cache is enabled
-   * 
+   *
    * @return {@code true} if cache enabled at call time, otherwise - {@code false}
    */
   public boolean isEnabled() {
@@ -61,7 +62,7 @@ public abstract class OAbstractRecordCache {
 
   /**
    * Switch cache state between enabled and disabled
-   * 
+   *
    * @param enable
    *          pass {@code true} to enable, otherwise - {@code false}
    */
@@ -74,7 +75,7 @@ public abstract class OAbstractRecordCache {
 
   /**
    * Remove record with specified identifier
-   * 
+   *
    * @param rid
    *          unique identifier of record
    * @return record stored in cache if any, otherwise - {@code null}
@@ -85,7 +86,7 @@ public abstract class OAbstractRecordCache {
 
   /**
    * Remove all records belonging to specified cluster
-   * 
+   *
    * @param cid
    *          identifier of cluster
    */
@@ -127,14 +128,6 @@ public abstract class OAbstractRecordCache {
     return underlying.size();
   }
 
-  /**
-   * Maximum number of items cache should keep
-   * 
-   * @return non-negative integer
-   */
-  public int getMaxSize() {
-    return underlying.limit();
-  }
 
   /**
    * All operations running at cache initialization stage
@@ -143,28 +136,12 @@ public abstract class OAbstractRecordCache {
     underlying.startup();
 
     Orient.instance().getProfiler()
-        .registerHookValue(profilerPrefix + "enabled", "Cache enabled", METRIC_TYPE.ENABLED, new OProfilerHookValue() {
-          public Object getValue() {
-            return isEnabled();
-          }
-        }, profilerMetadataPrefix + "enabled");
-
-    Orient.instance().getProfiler()
         .registerHookValue(profilerPrefix + "current", "Number of entries in cache", METRIC_TYPE.SIZE, new OProfilerHookValue() {
           public Object getValue() {
             return getSize();
           }
         }, profilerMetadataPrefix + "current");
 
-    Orient
-        .instance()
-        .getProfiler()
-        .registerHookValue(profilerPrefix + "max", "Maximum number of entries in cache", METRIC_TYPE.SIZE,
-            new OProfilerHookValue() {
-              public Object getValue() {
-                return getMaxSize();
-              }
-            }, profilerMetadataPrefix + "max");
   }
 
   /**

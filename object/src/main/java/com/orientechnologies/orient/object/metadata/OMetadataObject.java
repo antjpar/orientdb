@@ -18,30 +18,48 @@ package com.orientechnologies.orient.object.metadata;
 
 import java.io.IOException;
 
+import com.orientechnologies.orient.core.cache.OCommandCache;
 import com.orientechnologies.orient.core.index.OIndexManagerProxy;
 import com.orientechnologies.orient.core.metadata.OMetadata;
+import com.orientechnologies.orient.core.metadata.OMetadataInternal;
 import com.orientechnologies.orient.core.metadata.function.OFunctionLibrary;
-import com.orientechnologies.orient.core.metadata.schema.OSchema;
+import com.orientechnologies.orient.core.metadata.schema.OImmutableSchema;
 import com.orientechnologies.orient.core.metadata.security.OSecurity;
-import com.orientechnologies.orient.core.schedule.OSchedulerListener;
+import com.orientechnologies.orient.core.metadata.sequence.OSequenceLibrary;
+import com.orientechnologies.orient.core.schedule.OScheduler;
 import com.orientechnologies.orient.object.metadata.schema.OSchemaProxyObject;
 
 /**
  * @author luca.molino
  * 
  */
-public class OMetadataObject implements OMetadata {
+public class OMetadataObject implements OMetadataInternal {
 
-  protected OMetadata          underlying;
+  protected OMetadataInternal  underlying;
   protected OSchemaProxyObject schema;
 
-  public OMetadataObject(OMetadata iUnderlying) {
+  public OMetadataObject(OMetadataInternal iUnderlying) {
     underlying = iUnderlying;
   }
 
-  public OMetadataObject(OMetadata iUnderlying, OSchemaProxyObject iSchema) {
+  public OMetadataObject(OMetadataInternal iUnderlying, OSchemaProxyObject iSchema) {
     underlying = iUnderlying;
     schema = iSchema;
+  }
+
+  @Override
+  public void makeThreadLocalSchemaSnapshot() {
+    underlying.makeThreadLocalSchemaSnapshot();
+  }
+
+  @Override
+  public void clearThreadLocalSchemaSnapshot() {
+    underlying.clearThreadLocalSchemaSnapshot();
+  }
+
+  @Override
+  public OImmutableSchema getImmutableSchemaSnapshot() {
+    return underlying.getImmutableSchemaSnapshot();
   }
 
   @Override
@@ -52,7 +70,6 @@ public class OMetadataObject implements OMetadata {
   @Override
   public void create() throws IOException {
     underlying.create();
-
   }
 
   @Override
@@ -60,6 +77,11 @@ public class OMetadataObject implements OMetadata {
     if (schema == null)
       schema = new OSchemaProxyObject(underlying.getSchema());
     return schema;
+  }
+
+  @Override
+  public OCommandCache getCommandCache() {
+    return underlying.getCommandCache();
   }
 
   @Override
@@ -93,8 +115,13 @@ public class OMetadataObject implements OMetadata {
   }
 
   @Override
-  public OSchedulerListener getSchedulerListener() {
-    return underlying.getSchedulerListener();
+  public OSequenceLibrary getSequenceLibrary() {
+    return underlying.getSequenceLibrary();
+  }
+
+    @Override
+  public OScheduler getScheduler() {
+    return underlying.getScheduler();
   }
 
   public OMetadata getUnderlying() {

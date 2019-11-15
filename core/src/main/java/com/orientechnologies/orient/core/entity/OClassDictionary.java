@@ -1,44 +1,49 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.entity;
 
-import com.orientechnologies.orient.core.config.*;
+import com.orientechnologies.orient.core.config.OStorageClusterHoleConfiguration;
+import com.orientechnologies.orient.core.config.OStorageConfiguration;
+import com.orientechnologies.orient.core.config.OStorageDataHoleConfiguration;
+import com.orientechnologies.orient.core.config.OStorageFileConfiguration;
+import com.orientechnologies.orient.core.config.OStorageSegmentConfiguration;
 import com.orientechnologies.orient.core.exception.OConfigurationException;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
 import com.orientechnologies.orient.core.metadata.schema.OProperty;
 import com.orientechnologies.orient.core.metadata.security.OUser;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.record.impl.ORecordBytes;
-import com.orientechnologies.orient.core.record.impl.ORecordFlat;
 
 public class OClassDictionary {
   private static final OClassDictionary instance = new OClassDictionary();
+
+  public static OClassDictionary instance() {
+    return instance;
+  }
 
   public Class<?> getClassByCode(final char iType) {
     switch (iType) {
     case '0':
       return ODocument.class;
-      // case '1':
-      // return ORecordColumn.class;
     case '2':
-      return ORecordFlat.class;
+      throw new IllegalArgumentException("Record type 'flat' is not supported anymore");
     case '3':
       return ORecordBytes.class;
 
@@ -51,10 +56,6 @@ public class OClassDictionary {
 
     case '7':
       return OStorageConfiguration.class;
-    case '8':
-      return OStoragePhysicalClusterConfigurationLocal.class;
-    case '9':
-      return OStorageDataConfiguration.class;
     case 'a':
       return OStorageClusterHoleConfiguration.class;
     case 'b':
@@ -63,9 +64,6 @@ public class OClassDictionary {
       return OStorageSegmentConfiguration.class;
     case 'd':
       return OStorageFileConfiguration.class;
-    case 'f':
-      return OStoragePhysicalClusterConfigurationLocal.class;
-
     }
 
     throw new OConfigurationException("Unsupported record type: " + iType);
@@ -74,10 +72,6 @@ public class OClassDictionary {
   public Character getCodeByClass(final Class<?> iClass) {
     if (iClass.equals(ODocument.class))
       return '0';
-    // if (iClass.equals(ORecordColumn.class))
-    // return '1';
-    if (iClass.equals(ORecordFlat.class))
-      return '2';
     if (iClass.equals(ORecordBytes.class))
       return '3';
 
@@ -90,10 +84,6 @@ public class OClassDictionary {
 
     if (iClass.equals(OStorageConfiguration.class))
       return '7';
-    if (iClass.equals(OStoragePhysicalClusterConfigurationLocal.class))
-      return '8';
-    if (iClass.equals(OStorageDataConfiguration.class))
-      return '9';
     if (iClass.equals(OStorageClusterHoleConfiguration.class))
       return 'a';
     if (iClass.equals(OStorageDataHoleConfiguration.class))
@@ -102,13 +92,7 @@ public class OClassDictionary {
       return 'c';
     if (iClass.equals(OStorageFileConfiguration.class))
       return 'd';
-    if (iClass.equals(OStoragePhysicalClusterConfigurationLocal.class))
-      return 'f';
 
     return null;
-  }
-
-  public static OClassDictionary instance() {
-    return instance;
   }
 }

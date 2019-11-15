@@ -1,38 +1,44 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 
 package com.orientechnologies.orient.core.index;
 
-import java.util.List;
-import java.util.regex.Pattern;
-
 import com.orientechnologies.orient.core.collate.OCollate;
+import com.orientechnologies.orient.core.config.OStorageConfiguration;
+import com.orientechnologies.orient.core.db.ODatabaseDocumentInternal;
+import com.orientechnologies.orient.core.db.ODatabaseRecordThreadLocal;
 import com.orientechnologies.orient.core.metadata.schema.OClass;
+import com.orientechnologies.orient.core.metadata.schema.OClassImpl;
 import com.orientechnologies.orient.core.metadata.schema.OProperty;
 import com.orientechnologies.orient.core.metadata.schema.OType;
+import com.orientechnologies.orient.core.storage.OStorage;
+
+import java.util.List;
+import java.util.Locale;
+import java.util.regex.Pattern;
 
 /**
  * Contains helper methods for {@link OIndexDefinition} creation.
- * 
+ * <p>
  * <b>IMPORTANT:</b> This class designed for internal usage only.
- * 
+ *
  * @author Artem Orobets
  */
 public class OIndexDefinitionFactory {
@@ -40,8 +46,7 @@ public class OIndexDefinitionFactory {
 
   /**
    * Creates an instance of {@link OIndexDefinition} for automatic index.
-   * 
-   * 
+   *
    * @param oClass
    *          class which will be indexed
    * @param fieldNames
@@ -50,21 +55,24 @@ public class OIndexDefinitionFactory {
    * @param types
    *          types of indexed properties
    * @param collates
+   * @param indexKind
+   * @param algorithm
    * @return index definition instance
    */
   public static OIndexDefinition createIndexDefinition(final OClass oClass, final List<String> fieldNames, final List<OType> types,
-      List<OCollate> collates) {
+      List<OCollate> collates, String indexKind, String algorithm) {
     checkTypes(oClass, fieldNames, types);
 
     if (fieldNames.size() == 1)
-      return createSingleFieldIndexDefinition(oClass, fieldNames.get(0), types.get(0), collates == null ? null : collates.get(0));
+      return createSingleFieldIndexDefinition(oClass, fieldNames.get(0), types.get(0), collates == null ? null : collates.get(0),
+          indexKind, algorithm);
     else
-      return createMultipleFieldIndexDefinition(oClass, fieldNames, types, collates);
+      return createMultipleFieldIndexDefinition(oClass, fieldNames, types, collates, indexKind, algorithm);
   }
 
   /**
    * Extract field name from '<property> [by key|value]' field format.
-   * 
+   *
    * @param fieldDefinition
    *          definition of field
    * @return extracted property name
@@ -76,12 +84,13 @@ public class OIndexDefinitionFactory {
     if (fieldNameParts.length == 3 && "by".equalsIgnoreCase(fieldNameParts[1]))
       return fieldNameParts[0];
 
-    throw new IllegalArgumentException("Illegal field name format, should be '<property> [by key|value]' but was '"
-        + fieldDefinition + '\'');
+    throw new IllegalArgumentException(
+        "Illegal field name format, should be '<property> [by key|value]' but was '" + fieldDefinition + '\'');
   }
 
   private static OIndexDefinition createMultipleFieldIndexDefinition(final OClass oClass, final List<String> fieldsToIndex,
-      final List<OType> types, List<OCollate> collates) {
+      final List<OType> types, List<OCollate> collates, String indexKind, String algorithm) {
+    final OIndexFactory factory = OIndexes.getFactory(indexKind, algorithm);
     final String className = oClass.getName();
     final OCompositeIndexDefinition compositeIndex = new OCompositeIndexDefinition(className);
 
@@ -90,7 +99,8 @@ public class OIndexDefinitionFactory {
       if (collates != null)
         collate = collates.get(i);
 
-      compositeIndex.addIndex(createSingleFieldIndexDefinition(oClass, fieldsToIndex.get(i), types.get(i), collate));
+      compositeIndex
+          .addIndex(createSingleFieldIndexDefinition(oClass, fieldsToIndex.get(i), types.get(i), collate, indexKind, algorithm));
     }
 
     return compositeIndex;
@@ -113,8 +123,9 @@ public class OIndexDefinitionFactory {
   }
 
   private static OIndexDefinition createSingleFieldIndexDefinition(OClass oClass, final String field, final OType type,
-      OCollate collate) {
-    final String fieldName = adjustFieldName(oClass, extractFieldName(field));
+      OCollate collate, String indexKind, String algorithm) {
+
+    final String fieldName = OClassImpl.decodeClassName(adjustFieldName(oClass, extractFieldName(field)));
     final OIndexDefinition indexDefinition;
 
     final OProperty propertyToIndex = oClass.getProperty(fieldName);
@@ -166,22 +177,32 @@ public class OIndexDefinitionFactory {
   }
 
   private static OPropertyMapIndexDefinition.INDEX_BY extractMapIndexSpecifier(final String fieldName) {
+
     String[] fieldNameParts = FILED_NAME_PATTERN.split(fieldName);
     if (fieldNameParts.length == 1)
       return OPropertyMapIndexDefinition.INDEX_BY.KEY;
 
     if (fieldNameParts.length == 3) {
-      if ("by".equals(fieldNameParts[1].toLowerCase()))
+      Locale locale = getServerLocale();
+
+      if ("by".equals(fieldNameParts[1].toLowerCase(locale)))
         try {
-          return OPropertyMapIndexDefinition.INDEX_BY.valueOf(fieldNameParts[2].toUpperCase());
+          return OPropertyMapIndexDefinition.INDEX_BY.valueOf(fieldNameParts[2].toUpperCase(locale));
         } catch (IllegalArgumentException iae) {
-          throw new IllegalArgumentException("Illegal field name format, should be '<property> [by key|value]' but was '"
-              + fieldName + '\'');
+          throw new IllegalArgumentException(
+              "Illegal field name format, should be '<property> [by key|value]' but was '" + fieldName + '\'', iae);
         }
     }
 
-    throw new IllegalArgumentException("Illegal field name format, should be '<property> [by key|value]' but was '" + fieldName
-        + '\'');
+    throw new IllegalArgumentException(
+        "Illegal field name format, should be '<property> [by key|value]' but was '" + fieldName + '\'');
+  }
+
+  private static Locale getServerLocale() {
+    ODatabaseDocumentInternal db = ODatabaseRecordThreadLocal.INSTANCE.get();
+    OStorage storage = db.getStorage();
+    OStorageConfiguration configuration = storage.getConfiguration();
+    return configuration.getLocaleInstance();
   }
 
   private static String adjustFieldName(final OClass clazz, final String fieldName) {

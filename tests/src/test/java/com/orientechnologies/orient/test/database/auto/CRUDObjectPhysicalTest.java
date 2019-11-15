@@ -19,6 +19,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.*;
 
+import com.orientechnologies.orient.core.record.impl.OBlob;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeMethod;
@@ -35,20 +36,17 @@ import com.orientechnologies.orient.core.db.record.OTrackedList;
 import com.orientechnologies.orient.core.db.record.OTrackedMap;
 import com.orientechnologies.orient.core.db.record.OTrackedSet;
 import com.orientechnologies.orient.core.exception.ODatabaseException;
-import com.orientechnologies.orient.core.exception.OQueryParsingException;
 import com.orientechnologies.orient.core.exception.OSerializationException;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.id.ORecordId;
 import com.orientechnologies.orient.core.metadata.security.OUser;
 import com.orientechnologies.orient.core.record.impl.ODocument;
 import com.orientechnologies.orient.core.record.impl.ORecordBytes;
+import com.orientechnologies.orient.core.sql.OCommandSQLParsingException;
 import com.orientechnologies.orient.core.sql.query.OSQLSynchQuery;
 import com.orientechnologies.orient.core.tx.OTransaction.TXTYPE;
-import com.orientechnologies.orient.core.type.tree.OMVRBTreeRIDSet;
-import com.orientechnologies.orient.enterprise.channel.binary.OResponseProcessingException;
 import com.orientechnologies.orient.object.db.OObjectDatabasePool;
 import com.orientechnologies.orient.object.iterator.OObjectIteratorClass;
-import com.orientechnologies.orient.object.iterator.OObjectIteratorCluster;
 import com.orientechnologies.orient.test.domain.base.*;
 import com.orientechnologies.orient.test.domain.business.Account;
 import com.orientechnologies.orient.test.domain.business.Address;
@@ -90,7 +88,7 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
     database.getEntityManager().registerEntityClasses("com.orientechnologies.orient.test.domain.whiz");
     database.getEntityManager().registerEntityClasses("com.orientechnologies.orient.test.domain.base");
 
-    startRecordNumber = database.countClusterElements("Account");
+    startRecordNumber = database.countClass("Account");
 
     Account account;
 
@@ -110,7 +108,7 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
 
   @Test(dependsOnMethods = "testReleasedPoolDatabase")
   public void testCreate() {
-    Assert.assertEquals(database.countClusterElements("Account") - startRecordNumber, TOT_RECORDS);
+    Assert.assertEquals(database.countClass("Account") - startRecordNumber, TOT_RECORDS);
   }
 
   @Test(dependsOnMethods = "testCreate")
@@ -130,11 +128,11 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
 
     database.getEntityManager().registerEntityClass(DummyForTestFreeze.class);
 
-    database.countClass(Dummy.class.getSimpleName());
+    database.countClass(DummyForTestFreeze.class.getSimpleName());
 
     database.getMetadata().getSchema().dropClass(DummyForTestFreeze.class.getSimpleName());
 
-    Assert.assertNotNull(database.getMetadata().getSchema().getClass(DummyForTestFreeze.class.getSimpleName()));
+    Assert.assertNull(database.getMetadata().getSchema().getClass(DummyForTestFreeze.class.getSimpleName()));
   }
 
   @Test
@@ -485,8 +483,7 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
           + " not compatible with current Object Database loading management");
     }
     collectionObj = doc.field("set");
-    validImplementation = (collectionObj instanceof OTrackedSet<?>) || (collectionObj instanceof ORecordLazySet)
-        || (collectionObj instanceof OMVRBTreeRIDSet);
+    validImplementation = (collectionObj instanceof OTrackedSet<?>) || (collectionObj instanceof ORecordLazySet);
     if (!validImplementation) {
       Assert.fail("Document set implementation " + collectionObj.getClass().getName()
           + " not compatible with current Object Database management");
@@ -1800,8 +1797,8 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
     boolean throwedEx = false;
     try {
       p.getList().add(new Object());
-    } catch (Throwable ose) {
-      if (ose instanceof ODatabaseException && ose.getCause() instanceof OSerializationException)
+    } catch (Exception ose) {
+      if (ose instanceof OSerializationException || ose.getCause() instanceof OSerializationException)
         throwedEx = true;
     }
     Assert.assertTrue(throwedEx);
@@ -1889,7 +1886,7 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
 
     p.setDocument(testDocument);
 
-    ORecordBytes testRecordBytes = new ORecordBytes(
+    OBlob testRecordBytes = new ORecordBytes(
         "this is a bytearray test. if you read this Object database has stored it correctly".getBytes());
 
     p.setByteArray(testRecordBytes);
@@ -1903,7 +1900,7 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
     database = OObjectDatabasePool.global().acquire(url, "admin", "admin");
     JavaComplexTestClass loaded = database.load(rid);
 
-    Assert.assertTrue(loaded.getByteArray() instanceof ORecordBytes);
+    Assert.assertTrue(loaded.getByteArray() instanceof OBlob);
     try {
       ByteArrayOutputStream out = new ByteArrayOutputStream();
       try {
@@ -1932,17 +1929,16 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
     p = database.newInstance(JavaComplexTestClass.class);
     byte[] thumbnailImageBytes = "this is a bytearray test. if you read this Object database has stored it correctlyVERSION2"
         .getBytes();
-    ORecordBytes oRecordBytes = new ORecordBytes(database.getUnderlying(), thumbnailImageBytes);
+    OBlob oRecordBytes = new ORecordBytes(database.getUnderlying(), thumbnailImageBytes);
     oRecordBytes.save();
     p.setByteArray(oRecordBytes);
     p = database.save(p);
-    Assert.assertTrue(p.getByteArray() instanceof ORecordBytes);
+    Assert.assertTrue(p.getByteArray() instanceof OBlob);
     try {
       ByteArrayOutputStream out = new ByteArrayOutputStream();
       try {
         p.getByteArray().toOutputStream(out);
-        Assert.assertEquals(
-            "this is a bytearray test. if you read this Object database has stored it correctlyVERSION2".getBytes(),
+        Assert.assertEquals("this is a bytearray test. if you read this Object database has stored it correctlyVERSION2".getBytes(),
             out.toByteArray());
         Assert.assertEquals("this is a bytearray test. if you read this Object database has stored it correctlyVERSION2",
             new String(out.toByteArray()));
@@ -1960,13 +1956,12 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
     database = OObjectDatabasePool.global().acquire(url, "admin", "admin");
     loaded = database.load(rid);
 
-    Assert.assertTrue(loaded.getByteArray() instanceof ORecordBytes);
+    Assert.assertTrue(loaded.getByteArray() instanceof OBlob);
     try {
       ByteArrayOutputStream out = new ByteArrayOutputStream();
       try {
         loaded.getByteArray().toOutputStream(out);
-        Assert.assertEquals(
-            "this is a bytearray test. if you read this Object database has stored it correctlyVERSION2".getBytes(),
+        Assert.assertEquals("this is a bytearray test. if you read this Object database has stored it correctlyVERSION2".getBytes(),
             out.toByteArray());
         Assert.assertEquals("this is a bytearray test. if you read this Object database has stored it correctlyVERSION2",
             new String(out.toByteArray()));
@@ -1985,13 +1980,12 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
     oRecordBytes.save();
     p.setByteArray(oRecordBytes);
     p = database.save(p);
-    Assert.assertTrue(p.getByteArray() instanceof ORecordBytes);
+    Assert.assertTrue(p.getByteArray() instanceof OBlob);
     try {
       ByteArrayOutputStream out = new ByteArrayOutputStream();
       try {
         p.getByteArray().toOutputStream(out);
-        Assert.assertEquals(
-            "this is a bytearray test. if you read this Object database has stored it correctlyVERSION2".getBytes(),
+        Assert.assertEquals("this is a bytearray test. if you read this Object database has stored it correctlyVERSION2".getBytes(),
             out.toByteArray());
         Assert.assertEquals("this is a bytearray test. if you read this Object database has stored it correctlyVERSION2",
             new String(out.toByteArray()));
@@ -2009,13 +2003,12 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
     database = OObjectDatabasePool.global().acquire(url, "admin", "admin");
     loaded = database.load(rid);
 
-    Assert.assertTrue(loaded.getByteArray() instanceof ORecordBytes);
+    Assert.assertTrue(loaded.getByteArray() instanceof OBlob);
     try {
       ByteArrayOutputStream out = new ByteArrayOutputStream();
       try {
         loaded.getByteArray().toOutputStream(out);
-        Assert.assertEquals(
-            "this is a bytearray test. if you read this Object database has stored it correctlyVERSION2".getBytes(),
+        Assert.assertEquals("this is a bytearray test. if you read this Object database has stored it correctlyVERSION2".getBytes(),
             out.toByteArray());
         Assert.assertEquals("this is a bytearray test. if you read this Object database has stored it correctlyVERSION2",
             new String(out.toByteArray()));
@@ -2033,7 +2026,7 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
     try {
       OObjectIteratorClass<JavaComplexTestClass> browseClass = database.browseClass(JavaComplexTestClass.class);
       for (JavaComplexTestClass ebookPropertyItem : browseClass) {
-        ORecordBytes coverThumbnail = ebookPropertyItem.getByteArray(); // The IllegalArgumentException is thrown here.
+        OBlob coverThumbnail = ebookPropertyItem.getByteArray(); // The IllegalArgumentException is thrown here.
       }
     } catch (IllegalArgumentException iae) {
       Assert.fail("ORecordBytes field getter should not throw this exception", iae);
@@ -2064,7 +2057,7 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
   @Test(dependsOnMethods = "testAddingORecordBytesAfterParentCreation")
   public void testObjectDelete() {
     Media media = new Media();
-    ORecordBytes testRecord = new ORecordBytes("This is a test".getBytes());
+    OBlob testRecord = new ORecordBytes("This is a test".getBytes());
     media.setContent(testRecord);
     media = database.save(media);
 
@@ -2077,7 +2070,7 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
   @Test(dependsOnMethods = "testObjectDelete")
   public void testOrphanDelete() {
     Media media = new Media();
-    ORecordBytes testRecord = new ORecordBytes("This is a test".getBytes());
+    OBlob testRecord = new ORecordBytes("This is a test".getBytes());
     media.setContent(testRecord);
     media = database.save(media);
 
@@ -2091,7 +2084,7 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
   public void update() {
     int i = 0;
     Account a;
-    for (Object o : database.browseCluster("Account").setFetchPlan("*:1")) {
+    for (Object o : database.browseClass("Account").setFetchPlan("*:1")) {
       a = (Account) o;
 
       if (i % 2 == 0)
@@ -2109,7 +2102,7 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
   public void testUpdate() {
     int i = 0;
     Account a;
-    for (OObjectIteratorCluster<Account> iterator = database.browseCluster("Account"); iterator.hasNext();) {
+    for (OObjectIteratorClass<Account> iterator = database.browseClass("Account"); iterator.hasNext();) {
       iterator.setFetchPlan("*:1");
       a = iterator.next();
 
@@ -2128,8 +2121,8 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
   public void createLinked() {
     long profiles = database.countClass("Profile");
 
-    Profile neo = new Profile("Neo").setValue("test").setLocation(
-        new Address("residence", new City(new Country("Spain"), "Madrid"), "Rio de Castilla"));
+    Profile neo = new Profile("Neo").setValue("test")
+        .setLocation(new Address("residence", new City(new Country("Spain"), "Madrid"), "Rio de Castilla"));
     neo.addFollowing(new Profile("Morpheus"));
     neo.addFollowing(new Profile("Trinity"));
 
@@ -2188,8 +2181,8 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
   public void queryCross3Levels() {
     database.getMetadata().getSchema().reload();
 
-    final List<Profile> result = database.query(new OSQLSynchQuery<Profile>(
-        "select from Profile where location.city.country.name = 'Spain'"));
+    final List<Profile> result = database
+        .query(new OSQLSynchQuery<Profile>("select from Profile where location.city.country.name = 'Spain'"));
 
     Assert.assertTrue(result.size() > 0);
 
@@ -2205,15 +2198,15 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
   public void deleteFirst() {
     database.getMetadata().getSchema().reload();
 
-    startRecordNumber = database.countClusterElements("Account");
+    startRecordNumber = database.countClass("Account");
 
-    // DELETE ALL THE RECORD IN THE CLUSTER
-    for (Object obj : database.browseCluster("Account")) {
+    // DELETE ALL THE RECORD IN THE CLASS
+    for (Object obj : database.browseClass("Account")) {
       database.delete(obj);
       break;
     }
 
-    Assert.assertEquals(database.countClusterElements("Account"), startRecordNumber - 1);
+    Assert.assertEquals(database.countClass("Account"), startRecordNumber - 1);
   }
 
   @Test
@@ -2295,9 +2288,7 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
 
       List<Profile> result = database.command(query).execute(params);
       Assert.fail();
-    } catch (OResponseProcessingException e) {
-      Assert.assertTrue(e.getCause() instanceof OQueryParsingException);
-    } catch (OQueryParsingException e) {
+    } catch (OCommandSQLParsingException e) {
       Assert.assertTrue(true);
     }
   }
@@ -2446,6 +2437,7 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
     Assert.assertEquals(cresult.size(), 0);
   }
 
+  @Test(enabled = false, dependsOnMethods = "testCreate")
   public void testEmbeddedBinary() {
     database.getMetadata().getSchema().reload();
 
@@ -2467,8 +2459,8 @@ public class CRUDObjectPhysicalTest extends ObjectDBBaseTest {
   public void queryById() {
     List<Profile> result1 = database.query(new OSQLSynchQuery<Profile>("select from Profile limit 1"));
 
-    List<Profile> result2 = database.query(new OSQLSynchQuery<Profile>("select from Profile where @rid = ?"), result1.get(0)
-        .getId());
+    List<Profile> result2 = database
+        .query(new OSQLSynchQuery<Profile>("select from Profile where @rid = ?"), result1.get(0).getId());
 
     Assert.assertTrue(result2.size() != 0);
   }

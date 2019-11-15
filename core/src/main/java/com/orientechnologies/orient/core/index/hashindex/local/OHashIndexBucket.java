@@ -1,22 +1,22 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.index.hashindex.local;
 
 import com.orientechnologies.common.comparator.ODefaultComparator;
@@ -25,9 +25,11 @@ import com.orientechnologies.common.serialization.types.OByteSerializer;
 import com.orientechnologies.common.serialization.types.OIntegerSerializer;
 import com.orientechnologies.common.serialization.types.OLongSerializer;
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
-import com.orientechnologies.orient.core.index.hashindex.local.cache.OCacheEntry;
 import com.orientechnologies.orient.core.metadata.schema.OType;
+import com.orientechnologies.orient.core.storage.cache.OCacheEntry;
 import com.orientechnologies.orient.core.storage.impl.local.paginated.base.ODurablePage;
+import com.orientechnologies.orient.core.storage.impl.local.paginated.wal.OWALChanges;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.io.IOException;
 import java.util.Comparator;
@@ -39,40 +41,47 @@ import java.util.NoSuchElementException;
  * @since 2/17/13
  */
 public class OHashIndexBucket<K, V> extends ODurablePage implements Iterable<OHashIndexBucket.Entry<K, V>> {
-  private static final int           FREE_POINTER_OFFSET        = NEXT_FREE_POSITION;
-  private static final int           DEPTH_OFFSET               = FREE_POINTER_OFFSET + OIntegerSerializer.INT_SIZE;
-  private static final int           SIZE_OFFSET                = DEPTH_OFFSET + OByteSerializer.BYTE_SIZE;
-  private static final int           HISTORY_OFFSET             = SIZE_OFFSET + OIntegerSerializer.INT_SIZE;
+  private static final int FREE_POINTER_OFFSET = NEXT_FREE_POSITION;
+  private static final int DEPTH_OFFSET        = FREE_POINTER_OFFSET + OIntegerSerializer.INT_SIZE;
+  private static final int SIZE_OFFSET         = DEPTH_OFFSET + OByteSerializer.BYTE_SIZE;
+  private static final int HISTORY_OFFSET      = SIZE_OFFSET + OIntegerSerializer.INT_SIZE;
 
-  private static final int           NEXT_REMOVED_BUCKET_OFFSET = HISTORY_OFFSET + OLongSerializer.LONG_SIZE * 64;
-  private static final int           POSITIONS_ARRAY_OFFSET     = NEXT_REMOVED_BUCKET_OFFSET + OLongSerializer.LONG_SIZE;
+  private static final int NEXT_REMOVED_BUCKET_OFFSET = HISTORY_OFFSET + OLongSerializer.LONG_SIZE * 64;
+  private static final int POSITIONS_ARRAY_OFFSET     = NEXT_REMOVED_BUCKET_OFFSET + OLongSerializer.LONG_SIZE;
 
-  public static final int            MAX_BUCKET_SIZE_BYTES      = OGlobalConfiguration.DISK_CACHE_PAGE_SIZE.getValueAsInteger() * 1024;
+  public static final int MAX_BUCKET_SIZE_BYTES = OGlobalConfiguration.DISK_CACHE_PAGE_SIZE.getValueAsInteger() * 1024;
 
   private final OBinarySerializer<K> keySerializer;
   private final OBinarySerializer<V> valueSerializer;
   private final OType[]              keyTypes;
-  private final Comparator           keyComparator              = ODefaultComparator.INSTANCE;
+  private final Comparator keyComparator = ODefaultComparator.INSTANCE;
 
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   public OHashIndexBucket(int depth, OCacheEntry cacheEntry, OBinarySerializer<K> keySerializer,
-      OBinarySerializer<V> valueSerializer, OType[] keyTypes, TrackMode trackMode) throws IOException {
-    super(cacheEntry, trackMode);
+      OBinarySerializer<V> valueSerializer, OType[] keyTypes, OWALChanges changes) throws IOException {
+    super(cacheEntry, changes);
 
     this.keySerializer = keySerializer;
     this.valueSerializer = valueSerializer;
     this.keyTypes = keyTypes;
 
-    setByteValue(DEPTH_OFFSET, (byte) depth);
-    setIntValue(FREE_POINTER_OFFSET, MAX_BUCKET_SIZE_BYTES);
+    init(depth);
   }
 
+  @SuppressFBWarnings("EI_EXPOSE_REP2")
   public OHashIndexBucket(OCacheEntry cacheEntry, OBinarySerializer<K> keySerializer, OBinarySerializer<V> valueSerializer,
-      OType[] keyTypes, TrackMode trackMode) {
-    super(cacheEntry, trackMode);
+      OType[] keyTypes, OWALChanges changes) {
+    super(cacheEntry, changes);
 
     this.keySerializer = keySerializer;
     this.valueSerializer = valueSerializer;
     this.keyTypes = keyTypes;
+  }
+
+  public void init(int depth) throws IOException {
+    setByteValue(DEPTH_OFFSET, (byte) depth);
+    setIntValue(FREE_POINTER_OFFSET, MAX_BUCKET_SIZE_BYTES);
+    setIntValue(SIZE_OFFSET, 0);
   }
 
   public Entry<K, V> find(final K key, final long hashCode) {
@@ -143,6 +152,25 @@ public class OHashIndexBucket<K, V> extends ODurablePage implements Iterable<OHa
     return deserializeFromDirectMemory(keySerializer, entryPosition + OLongSerializer.LONG_SIZE);
   }
 
+  /**
+   * Obtains the value stored under the given index in this bucket.
+   *
+   * @param index the value index.
+   *
+   * @return the obtained value.
+   */
+  public V getValue(int index) {
+    int entryPosition = getIntValue(POSITIONS_ARRAY_OFFSET + index * OIntegerSerializer.INT_SIZE);
+
+    // skip hash code
+    entryPosition += OLongSerializer.LONG_SIZE;
+
+    // skip key
+    entryPosition += getObjectSizeInDirectMemory(keySerializer, entryPosition);
+
+    return deserializeFromDirectMemory(valueSerializer, entryPosition);
+  }
+
   public int getIndex(final long hashCode, final K key) {
     return binarySearch(key, hashCode);
   }
@@ -160,14 +188,14 @@ public class OHashIndexBucket<K, V> extends ODurablePage implements Iterable<OHa
   }
 
   public int mergedSize(OHashIndexBucket buddyBucket) {
-    return POSITIONS_ARRAY_OFFSET + size() * OIntegerSerializer.INT_SIZE
-        + (MAX_BUCKET_SIZE_BYTES - getIntValue(FREE_POINTER_OFFSET)) + buddyBucket.size() * OIntegerSerializer.INT_SIZE
-        + (MAX_BUCKET_SIZE_BYTES - getIntValue(FREE_POINTER_OFFSET));
+    return POSITIONS_ARRAY_OFFSET + size() * OIntegerSerializer.INT_SIZE + (MAX_BUCKET_SIZE_BYTES - getIntValue(
+        FREE_POINTER_OFFSET)) + buddyBucket.size() * OIntegerSerializer.INT_SIZE + (MAX_BUCKET_SIZE_BYTES - getIntValue(
+        FREE_POINTER_OFFSET));
   }
 
   public int getContentSize() {
-    return POSITIONS_ARRAY_OFFSET + size() * OIntegerSerializer.INT_SIZE
-        + (MAX_BUCKET_SIZE_BYTES - getIntValue(FREE_POINTER_OFFSET));
+    return POSITIONS_ARRAY_OFFSET + size() * OIntegerSerializer.INT_SIZE + (MAX_BUCKET_SIZE_BYTES - getIntValue(
+        FREE_POINTER_OFFSET));
   }
 
   public int updateEntry(int index, V value) throws IOException {
@@ -204,8 +232,8 @@ public class OHashIndexBucket<K, V> extends ODurablePage implements Iterable<OHa
     final int ridSize = getObjectSizeInDirectMemory(valueSerializer, entryPosition + keySize + OLongSerializer.LONG_SIZE);
     final int entrySize = keySize + ridSize + OLongSerializer.LONG_SIZE;
 
-    moveData(positionOffset + OIntegerSerializer.INT_SIZE, positionOffset, size() * OIntegerSerializer.INT_SIZE - (index + 1)
-        * OIntegerSerializer.INT_SIZE);
+    moveData(positionOffset + OIntegerSerializer.INT_SIZE, positionOffset,
+        size() * OIntegerSerializer.INT_SIZE - (index + 1) * OIntegerSerializer.INT_SIZE);
 
     if (entryPosition > freePointer)
       moveData(freePointer, freePointer + entrySize, entryPosition - freePointer);
@@ -226,8 +254,8 @@ public class OHashIndexBucket<K, V> extends ODurablePage implements Iterable<OHa
   }
 
   public boolean addEntry(long hashCode, K key, V value) throws IOException {
-    int entreeSize = keySerializer.getObjectSize(key, (Object[]) keyTypes) + valueSerializer.getObjectSize(value)
-        + OLongSerializer.LONG_SIZE;
+    int entreeSize =
+        keySerializer.getObjectSize(key, (Object[]) keyTypes) + valueSerializer.getObjectSize(value) + OLongSerializer.LONG_SIZE;
     int freePointer = getIntValue(FREE_POINTER_OFFSET);
 
     int size = size();
@@ -250,8 +278,8 @@ public class OHashIndexBucket<K, V> extends ODurablePage implements Iterable<OHa
 
     final int positionsOffset = insertionPoint * OIntegerSerializer.INT_SIZE + POSITIONS_ARRAY_OFFSET;
 
-    moveData(positionsOffset, positionsOffset + OIntegerSerializer.INT_SIZE, size() * OIntegerSerializer.INT_SIZE - insertionPoint
-        * OIntegerSerializer.INT_SIZE);
+    moveData(positionsOffset, positionsOffset + OIntegerSerializer.INT_SIZE,
+        size() * OIntegerSerializer.INT_SIZE - insertionPoint * OIntegerSerializer.INT_SIZE);
 
     final int entreePosition = freePointer - entreeSize;
     setIntValue(positionsOffset, entreePosition);
@@ -263,8 +291,8 @@ public class OHashIndexBucket<K, V> extends ODurablePage implements Iterable<OHa
 
   public void appendEntry(long hashCode, K key, V value) throws IOException {
     final int positionsOffset = size() * OIntegerSerializer.INT_SIZE + POSITIONS_ARRAY_OFFSET;
-    final int entreeSize = keySerializer.getObjectSize(key, (Object[]) keyTypes) + valueSerializer.getObjectSize(value)
-        + OLongSerializer.LONG_SIZE;
+    final int entreeSize =
+        keySerializer.getObjectSize(key, (Object[]) keyTypes) + valueSerializer.getObjectSize(value) + OLongSerializer.LONG_SIZE;
 
     final int freePointer = getIntValue(FREE_POINTER_OFFSET);
     final int entreePosition = freePointer - entreeSize;

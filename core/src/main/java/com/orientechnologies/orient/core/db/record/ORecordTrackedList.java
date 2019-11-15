@@ -40,15 +40,9 @@ public class ORecordTrackedList extends OTrackedList<OIdentifiable> {
     return iterator();
   }
 
-  /**
-   * The item's identity does not affect nothing.
-   */
-  public void onBeforeIdentityChanged(final ORecord iRecord) {
+  @Override
+  public void replace(OMultiValueChangeEvent<Object, Object> event, Object newValue) {
+    //not needed do nothing
   }
 
-  /**
-   * The item's identity does not affect nothing.
-   */
-  public void onAfterIdentityChanged(final ORecord iRecord) {
-  }
 }

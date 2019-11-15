@@ -1,284 +1,911 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 
 package com.orientechnologies.orient.core.index.sbtree.local;
 
 import com.orientechnologies.common.comparator.ODefaultComparator;
+import com.orientechnologies.common.exception.OException;
 import com.orientechnologies.common.log.OLogManager;
 import com.orientechnologies.common.serialization.types.OBinarySerializer;
 import com.orientechnologies.orient.core.config.OGlobalConfiguration;
+import com.orientechnologies.orient.core.exception.OTooBigIndexKeyException;
 import com.orientechnologies.orient.core.index.OAlwaysGreaterKey;
 import com.orientechnologies.orient.core.index.OAlwaysLessKey;
 import com.orientechnologies.orient.core.index.OCompositeKey;
-import com.orientechnologies.orient.core.index.hashindex.local.cache.OCacheEntry;
-import com.orientechnologies.orient.core.index.hashindex.local.cache.ODiskCache;
+import com.orientechnologies.orient.core.index.OIndexEngine;
 import com.orientechnologies.orient.core.iterator.OEmptyIterator;
 import com.orientechnologies.orient.core.iterator.OEmptyMapEntryIterator;
 import com.orientechnologies.orient.core.metadata.schema.OType;
-import com.orientechnologies.orient.core.serialization.serializer.stream.OStreamSerializer;
+import com.orientechnologies.orient.core.storage.cache.OCacheEntry;
 import com.orientechnologies.orient.core.storage.impl.local.OAbstractPaginatedStorage;
-import com.orientechnologies.orient.core.storage.impl.local.paginated.OStorageTransaction;
+import com.orientechnologies.orient.core.storage.impl.local.paginated.atomicoperations.OAtomicOperation;
 import com.orientechnologies.orient.core.storage.impl.local.paginated.base.ODurableComponent;
-import com.orientechnologies.orient.core.storage.impl.local.paginated.base.ODurablePage;
+import com.orientechnologies.orient.core.storage.impl.local.statistic.OSessionStoragePerformanceStatistic;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * This is implementation which is based on B+-tree implementation threaded tree.
- * 
+ * <p>
  * The main differences are:
  * <ol>
  * <li>Buckets are not compacted/removed if they are empty after deletion of item. They reused later when new items are added.</li>
  * <li>All non-leaf buckets have links to neighbor buckets which contain keys which are less/more than keys contained in current
  * bucket</li>
  * <ol/>
- * 
- * 
- * There is support of null values for keys, but values itself can not be null. Null keys support is switched off by default if null
+ * <p>
+ * <p>
+ * There is support of null values for keys, but values itself cannot be null. Null keys support is switched off by default if null
  * keys are supported value which is related to null key will be stored in separate file which has only one page.
- * 
+ * <p>
  * Buckets/pages for usual (non-null) key-value entries can be considered as sorted array. The first bytes of page contains such
  * auxiliary information as size of entries contained in bucket, links to neighbors which contain entries with keys less/more than
  * keys in current bucket.
- * 
+ * <p>
  * The next bytes contain sorted array of entries. Array itself is split on two parts. First part is growing from start to end, and
  * second part is growing from end to start.
- * 
+ * <p>
  * First part is array of offsets to real key-value entries which are stored in second part of array which grows from end to start.
  * This array of offsets is sorted by accessing order according to key value. So we can use binary search to find requested key.
  * When new key-value pair is added we append binary presentation of this pair to the second part of array which grows from end of
  * page to start, remember value of offset for this pair, and find proper position of this offset inside of first part of array.
  * Such approach allows to minimize amount of memory involved in performing of operations and as result speed up data processing.
- * 
+ *
  * @author Andrey Lomakin
  * @since 8/7/13
  */
 public class OSBTree<K, V> extends ODurableComponent {
   private static final int               MAX_KEY_SIZE            = OGlobalConfiguration.SBTREE_MAX_KEY_SIZE.getValueAsInteger();
   private static final int               MAX_EMBEDDED_VALUE_SIZE = OGlobalConfiguration.SBTREE_MAX_EMBEDDED_VALUE_SIZE
-                                                                     .getValueAsInteger();
+      .getValueAsInteger();
   private static final OAlwaysLessKey    ALWAYS_LESS_KEY         = new OAlwaysLessKey();
   private static final OAlwaysGreaterKey ALWAYS_GREATER_KEY      = new OAlwaysGreaterKey();
 
-  private final static long              ROOT_INDEX              = 0;
-  private final ODurablePage.TrackMode   trackMode;
-  private final Comparator<? super K>    comparator              = ODefaultComparator.INSTANCE;
-  private final String                   dataFileExtension;
-  private final String                   nullFileExtension;
-  private final boolean                  durableInNonTxMode;
-  private OAbstractPaginatedStorage      storage;
-  private String                         name;
-  private ODiskCache                     diskCache;
-  private long                           fileId;
-  private long                           nullBucketFileId        = -1;
-  private int                            keySize;
-  private OBinarySerializer<K>           keySerializer;
-  private OType[]                        keyTypes;
-  private OBinarySerializer<V>           valueSerializer;
-  private boolean                        nullPointerSupport;
+  private static final int MAX_PATH_LENGTH = OGlobalConfiguration.SBTREE_MAX_DEPTH.getValueAsInteger();
 
-  public OSBTree(String dataFileExtension, boolean durableInNonTxMode, String nullFileExtension, ODurablePage.TrackMode trackMode) {
-    super(OGlobalConfiguration.ENVIRONMENT_CONCURRENT.getValueAsBoolean());
+  private final static long                  ROOT_INDEX = 0;
+  private final        Comparator<? super K> comparator = ODefaultComparator.INSTANCE;
+  private final String  nullFileExtension;
+  private final boolean durableInNonTxMode;
+  private       long    fileId;
+  private long nullBucketFileId = -1;
+  private int                  keySize;
+  private OBinarySerializer<K> keySerializer;
+  private OType[]              keyTypes;
+  private OBinarySerializer<V> valueSerializer;
+  private boolean              nullPointerSupport;
+
+  public OSBTree(String name, String dataFileExtension, boolean durableInNonTxMode, String nullFileExtension,
+      OAbstractPaginatedStorage storage) {
+    super(storage, name, dataFileExtension, name + dataFileExtension);
     acquireExclusiveLock();
     try {
-      this.dataFileExtension = dataFileExtension;
       this.nullFileExtension = nullFileExtension;
       this.durableInNonTxMode = durableInNonTxMode;
-      if (trackMode == null)
-        this.trackMode = ODurablePage.TrackMode.valueOf(OGlobalConfiguration.INDEX_TX_MODE.getValueAsString().toUpperCase());
-      else
-        this.trackMode = trackMode;
-
     } finally {
       releaseExclusiveLock();
     }
   }
 
-  public void create(String name, OBinarySerializer<K> keySerializer, OBinarySerializer<V> valueSerializer, OType[] keyTypes,
-      OAbstractPaginatedStorage storageLocal, int keySize, boolean nullPointerSupport) {
-    acquireExclusiveLock();
+  public void create(OBinarySerializer<K> keySerializer, OBinarySerializer<V> valueSerializer, OType[] keyTypes, int keySize,
+      boolean nullPointerSupport) {
+    assert keySerializer != null;
+    startOperation();
     try {
-      this.keySize = keySize;
-      this.storage = storageLocal;
-      this.keyTypes = keyTypes;
-
-      this.diskCache = storage.getDiskCache();
-
-      this.name = name;
-      this.keySerializer = keySerializer;
-      this.valueSerializer = valueSerializer;
-      this.nullPointerSupport = nullPointerSupport;
-
-      fileId = diskCache.openFile(name + dataFileExtension);
-
-      if (nullPointerSupport)
-        nullBucketFileId = diskCache.openFile(name + nullFileExtension);
-
-      initDurableComponent(storageLocal);
-
-      OCacheEntry rootCacheEntry = diskCache.load(fileId, ROOT_INDEX, false);
-      rootCacheEntry.acquireExclusiveLock();
+      final OAtomicOperation atomicOperation;
       try {
-        super.startAtomicOperation();
+        atomicOperation = startAtomicOperation(false);
+      } catch (IOException e) {
+        throw OException.wrapException(new OSBTreeException("Error during sbtree creation", this), e);
+      }
 
-        OSBTreeBucket<K, V> rootBucket = new OSBTreeBucket<K, V>(rootCacheEntry, true, keySerializer, keyTypes, valueSerializer,
-            getTrackMode());
-        rootBucket.setTreeSize(0);
+      acquireExclusiveLock();
+      try {
 
-        super.logPageChanges(rootBucket, fileId, ROOT_INDEX, true);
-        rootCacheEntry.markDirty();
+        this.keySize = keySize;
+        if (keyTypes != null)
+          this.keyTypes = Arrays.copyOf(keyTypes, keyTypes.length);
+        else
+          this.keyTypes = null;
+
+        this.keySerializer = keySerializer;
+
+        this.valueSerializer = valueSerializer;
+        this.nullPointerSupport = nullPointerSupport;
+
+        fileId = addFile(atomicOperation, getFullName());
+
+        if (nullPointerSupport)
+          nullBucketFileId = addFile(atomicOperation, getName() + nullFileExtension);
+
+        OCacheEntry rootCacheEntry = addPage(atomicOperation, fileId);
+        rootCacheEntry.acquireExclusiveLock();
+        try {
+
+          OSBTreeBucket<K, V> rootBucket = new OSBTreeBucket<K, V>(rootCacheEntry, true, keySerializer, keyTypes, valueSerializer,
+              getChanges(atomicOperation, rootCacheEntry));
+          rootBucket.setTreeSize(0);
+
+        } finally {
+          rootCacheEntry.releaseExclusiveLock();
+          releasePage(atomicOperation, rootCacheEntry);
+        }
+
+        endAtomicOperation(false, null);
+      } catch (IOException e) {
+        try {
+          endAtomicOperation(true, e);
+        } catch (IOException e1) {
+          OLogManager.instance().error(this, "Error during sbtree data rollback", e1);
+        }
+        throw OException.wrapException(new OSBTreeException("Error creation of sbtree with name " + getName(), this), e);
+      } catch (RuntimeException e) {
+        try {
+          endAtomicOperation(true, e);
+        } catch (IOException e1) {
+          OLogManager.instance().error(this, "Error during sbtree data rollback", e1);
+        }
+        throw e;
       } finally {
-        rootCacheEntry.releaseExclusiveLock();
-        diskCache.release(rootCacheEntry);
+        releaseExclusiveLock();
       }
-
-      super.endAtomicOperation(false);
-    } catch (Throwable e) {
-      try {
-        super.endAtomicOperation(true);
-      } catch (IOException e1) {
-        OLogManager.instance().error(this, "Error during sbtree data rollback", e1);
-      }
-      throw new OSBTreeException("Error creation of sbtree with name" + name, e);
     } finally {
-      releaseExclusiveLock();
+      completeOperation();
     }
   }
 
-  public String getName() {
+  public boolean isNullPointerSupport() {
     acquireSharedLock();
     try {
-      return name;
+      return nullPointerSupport;
     } finally {
       releaseSharedLock();
     }
   }
 
   public V get(K key) {
-    acquireSharedLock();
+    final OSessionStoragePerformanceStatistic statistic = performanceStatisticManager.getSessionPerformanceStatistic();
+    startOperation();
+    if (statistic != null)
+      statistic.startIndexEntryReadTimer();
     try {
-      checkNullSupport(key);
-
-      if (key != null) {
-        key = keySerializer.preprocess(key, (Object[]) keyTypes);
-
-        BucketSearchResult bucketSearchResult = findBucket(key);
-        if (bucketSearchResult.itemIndex < 0)
-          return null;
-
-        long pageIndex = bucketSearchResult.getLastPathItem();
-        OCacheEntry keyBucketCacheEntry = diskCache.load(fileId, pageIndex, false);
+      atomicOperationsManager.acquireReadLock(this);
+      try {
+        acquireSharedLock();
         try {
-          OSBTreeBucket<K, V> keyBucket = new OSBTreeBucket<K, V>(keyBucketCacheEntry, keySerializer, keyTypes, valueSerializer,
-              ODurablePage.TrackMode.NONE);
+          checkNullSupport(key);
 
-          OSBTreeBucket.SBTreeEntry<K, V> treeEntry = keyBucket.getEntry(bucketSearchResult.itemIndex);
-          return readValue(treeEntry.value);
+          OAtomicOperation atomicOperation = atomicOperationsManager.getCurrentOperation();
+          if (key != null) {
+            key = keySerializer.preprocess(key, (Object[]) keyTypes);
+
+            BucketSearchResult bucketSearchResult = findBucket(key, atomicOperation);
+            if (bucketSearchResult.itemIndex < 0)
+              return null;
+
+            long pageIndex = bucketSearchResult.getLastPathItem();
+            OCacheEntry keyBucketCacheEntry = loadPage(atomicOperation, fileId, pageIndex, false);
+            keyBucketCacheEntry.acquireSharedLock();
+            try {
+              OSBTreeBucket<K, V> keyBucket = new OSBTreeBucket<K, V>(keyBucketCacheEntry, keySerializer, keyTypes, valueSerializer,
+                  getChanges(atomicOperation, keyBucketCacheEntry));
+
+              OSBTreeBucket.SBTreeEntry<K, V> treeEntry = keyBucket.getEntry(bucketSearchResult.itemIndex);
+              return readValue(treeEntry.value, atomicOperation);
+            } finally {
+              keyBucketCacheEntry.releaseSharedLock();
+              releasePage(atomicOperation, keyBucketCacheEntry);
+            }
+          } else {
+            if (getFilledUpTo(atomicOperation, nullBucketFileId) == 0)
+              return null;
+
+            final OCacheEntry nullBucketCacheEntry = loadPage(atomicOperation, nullBucketFileId, 0, false);
+            nullBucketCacheEntry.acquireSharedLock();
+            try {
+              final ONullBucket<V> nullBucket = new ONullBucket<V>(nullBucketCacheEntry,
+                  getChanges(atomicOperation, nullBucketCacheEntry), valueSerializer, false);
+              final OSBTreeValue<V> treeValue = nullBucket.getValue();
+              if (treeValue == null)
+                return null;
+
+              return readValue(treeValue, atomicOperation);
+            } finally {
+              nullBucketCacheEntry.releaseSharedLock();
+              releasePage(atomicOperation, nullBucketCacheEntry);
+            }
+          }
         } finally {
-          diskCache.release(keyBucketCacheEntry);
+          releaseSharedLock();
         }
-      } else {
-        if (diskCache.getFilledUpTo(nullBucketFileId) == 0)
-          return null;
-
-        final OCacheEntry nullBucketCacheEntry = diskCache.load(nullBucketFileId, 0, false);
-        try {
-          final ONullBucket<V> nullBucket = new ONullBucket<V>(nullBucketCacheEntry, ODurablePage.TrackMode.NONE, valueSerializer,
-              false);
-          final OSBTreeValue<V> treeValue = nullBucket.getValue();
-          if (treeValue == null)
-            return null;
-
-          return readValue(treeValue);
-        } finally {
-          diskCache.release(nullBucketCacheEntry);
-        }
+      } catch (IOException e) {
+        throw OException.wrapException(new OSBTreeException("Error during retrieving  of sbtree with name " + getName(), this), e);
+      } finally {
+        atomicOperationsManager.releaseReadLock(this);
       }
-    } catch (IOException e) {
-      throw new OSBTreeException("Error during retrieving  of sbtree with name " + name, e);
     } finally {
-      releaseSharedLock();
+      if (statistic != null)
+        statistic.startIndexEntryReadTimer();
+      completeOperation();
     }
   }
 
   public void put(K key, V value) {
-    acquireExclusiveLock();
-    final OStorageTransaction transaction = storage.getStorageTransaction();
+    put(key, value, null);
+  }
+
+  /**
+   * Puts the given value under the given key into this tree. Validates the operation using the provided validator.
+   *
+   * @param key       the key to put the value under.
+   * @param value     the value to put.
+   * @param validator the operation validator.
+   *
+   * @return {@code true} if the validator allowed the put, {@code false} otherwise.
+   *
+   * @see OIndexEngine.Validator#validate(Object, Object, Object)
+   */
+  public boolean validatedPut(K key, V value, OIndexEngine.Validator<K, V> validator) {
+    return put(key, value, validator);
+  }
+
+  public void close(boolean flush) {
+    startOperation();
     try {
-      checkNullSupport(key);
+      acquireExclusiveLock();
+      try {
+        readCache.closeFile(fileId, flush, writeCache);
 
-      if (key != null) {
-        final int keySize = keySerializer.getObjectSize(key, (Object[]) keyTypes);
+        if (nullPointerSupport)
+          readCache.closeFile(nullBucketFileId, flush, writeCache);
 
-        final int valueSize = valueSerializer.getObjectSize(value);
-        if (keySize > MAX_KEY_SIZE)
-          throw new OSBTreeException("Key size is more than allowed, operation was canceled. Current key size " + keySize
-              + ", allowed  " + MAX_KEY_SIZE);
+      } catch (IOException e) {
+        throw OException.wrapException(new OSBTreeException("Error during close of index " + getName(), this), e);
+      } finally {
+        releaseExclusiveLock();
+      }
+    } finally {
+      completeOperation();
+    }
+  }
 
-        final boolean createLinkToTheValue = valueSize > MAX_EMBEDDED_VALUE_SIZE;
+  public void close() {
+    close(true);
+  }
 
-        key = keySerializer.preprocess(key, (Object[]) keyTypes);
+  public void clear() {
+    startOperation();
+    try {
+      final OAtomicOperation atomicOperation;
+      try {
+        atomicOperation = startAtomicOperation(true);
+      } catch (IOException e) {
+        throw OException.wrapException(new OSBTreeException("Error during sbtree clear", this), e);
+      }
 
-        startAtomicOperation();
+      acquireExclusiveLock();
+      try {
+        truncateFile(atomicOperation, fileId);
+
+        if (nullPointerSupport)
+          truncateFile(atomicOperation, nullBucketFileId);
+
+        OCacheEntry cacheEntry = loadPage(atomicOperation, fileId, ROOT_INDEX, false);
+        if (cacheEntry == null) {
+          cacheEntry = addPage(atomicOperation, fileId);
+        }
+
+        cacheEntry.acquireExclusiveLock();
         try {
+          OSBTreeBucket<K, V> rootBucket = new OSBTreeBucket<K, V>(cacheEntry, true, keySerializer, keyTypes, valueSerializer,
+              getChanges(atomicOperation, cacheEntry));
+
+          rootBucket.setTreeSize(0);
+
+        } finally {
+          cacheEntry.releaseExclusiveLock();
+          releasePage(atomicOperation, cacheEntry);
+        }
+
+        endAtomicOperation(false, null);
+      } catch (IOException e) {
+        rollback(e);
+
+        throw OException.wrapException(new OSBTreeException("Error during clear of sbtree with name " + getName(), this), e);
+      } catch (RuntimeException e) {
+        rollback(e);
+        throw e;
+      } finally {
+        releaseExclusiveLock();
+      }
+    } finally {
+      completeOperation();
+    }
+  }
+
+  public void delete() {
+    startOperation();
+    try {
+      final OAtomicOperation atomicOperation;
+      try {
+        atomicOperation = startAtomicOperation(false);
+      } catch (IOException e) {
+        throw OException.wrapException(new OSBTreeException("Error during sbtree deletion", this), e);
+      }
+
+      acquireExclusiveLock();
+      try {
+        deleteFile(atomicOperation, fileId);
+
+        if (nullPointerSupport)
+          deleteFile(atomicOperation, nullBucketFileId);
+
+        endAtomicOperation(false, null);
+      } catch (IOException e) {
+        rollback(e);
+        throw OException.wrapException(new OSBTreeException("Error during delete of sbtree with name " + getName(), this), e);
+      } catch (Exception e) {
+        rollback(e);
+        throw OException.wrapException(new OSBTreeException("Error during delete of sbtree with name " + getName(), this), e);
+      } finally {
+        releaseExclusiveLock();
+      }
+    } finally {
+      completeOperation();
+    }
+  }
+
+  public void deleteWithoutLoad(String name) {
+    startOperation();
+    try {
+      final OAtomicOperation atomicOperation;
+      try {
+        atomicOperation = startAtomicOperation(false);
+      } catch (IOException e) {
+        throw OException.wrapException(new OSBTreeException("Error during sbtree deletion", this), e);
+      }
+
+      acquireExclusiveLock();
+      try {
+        if (isFileExists(atomicOperation, getFullName())) {
+          final long fileId = openFile(atomicOperation, getFullName());
+          deleteFile(atomicOperation, fileId);
+        }
+
+        if (isFileExists(atomicOperation, getName() + nullFileExtension)) {
+          final long nullFileId = openFile(atomicOperation, getName() + nullFileExtension);
+          deleteFile(atomicOperation, nullFileId);
+        }
+
+        endAtomicOperation(false, null);
+      } catch (IOException ioe) {
+        rollback(ioe);
+        throw OException.wrapException(new OSBTreeException("Exception during deletion of sbtree " + getName(), this), ioe);
+      } catch (Exception e) {
+        rollback(e);
+        throw OException.wrapException(new OSBTreeException("Exception during deletion of sbtree " + getName(), this), e);
+      } finally {
+        releaseExclusiveLock();
+      }
+    } finally {
+      completeOperation();
+    }
+  }
+
+  public void load(String name, OBinarySerializer<K> keySerializer, OBinarySerializer<V> valueSerializer, OType[] keyTypes,
+      int keySize, boolean nullPointerSupport) {
+    startOperation();
+    try {
+      acquireExclusiveLock();
+      try {
+        this.keySize = keySize;
+        if (keyTypes != null)
+          this.keyTypes = Arrays.copyOf(keyTypes, keyTypes.length);
+        else
+          this.keyTypes = null;
+
+        this.nullPointerSupport = nullPointerSupport;
+
+        final OAtomicOperation atomicOperation = atomicOperationsManager.getCurrentOperation();
+
+        fileId = openFile(atomicOperation, getFullName());
+        if (nullPointerSupport)
+          nullBucketFileId = openFile(atomicOperation, name + nullFileExtension);
+
+        this.keySerializer = keySerializer;
+        this.valueSerializer = valueSerializer;
+      } catch (IOException e) {
+        throw OException.wrapException(new OSBTreeException("Exception during loading of sbtree " + name, this), e);
+      } finally {
+        releaseExclusiveLock();
+      }
+    } finally {
+      completeOperation();
+    }
+  }
+
+  public long size() {
+    startOperation();
+    try {
+      atomicOperationsManager.acquireReadLock(this);
+      try {
+        acquireSharedLock();
+        try {
+          OAtomicOperation atomicOperation = atomicOperationsManager.getCurrentOperation();
+
+          OCacheEntry rootCacheEntry = loadPage(atomicOperation, fileId, ROOT_INDEX, false);
+          rootCacheEntry.acquireSharedLock();
+          try {
+            OSBTreeBucket<K, V> rootBucket = new OSBTreeBucket<K, V>(rootCacheEntry, keySerializer, keyTypes, valueSerializer,
+                getChanges(atomicOperation, rootCacheEntry));
+            return rootBucket.getTreeSize();
+          } finally {
+            rootCacheEntry.releaseSharedLock();
+            releasePage(atomicOperation, rootCacheEntry);
+          }
+        } finally {
+          releaseSharedLock();
+        }
+      } catch (IOException e) {
+        throw OException.wrapException(new OSBTreeException("Error during retrieving of size of index " + getName(), this), e);
+      } finally {
+        atomicOperationsManager.releaseReadLock(this);
+      }
+    } finally {
+      completeOperation();
+    }
+  }
+
+  public V remove(K key) {
+    final OSessionStoragePerformanceStatistic statistic = performanceStatisticManager.getSessionPerformanceStatistic();
+    startOperation();
+    if (statistic != null)
+      statistic.startIndexEntryDeletionTimer();
+    try {
+      final OAtomicOperation atomicOperation;
+      try {
+        atomicOperation = startAtomicOperation(true);
+      } catch (IOException e) {
+        throw OException.wrapException(new OSBTreeException("Error during sbtree entrie remove", this), e);
+      }
+
+      acquireExclusiveLock();
+      try {
+        V removedValue;
+
+        if (key != null) {
+          key = keySerializer.preprocess(key, (Object[]) keyTypes);
+
+          BucketSearchResult bucketSearchResult = findBucket(key, atomicOperation);
+          if (bucketSearchResult.itemIndex < 0) {
+            endAtomicOperation(false, null);
+            return null;
+          }
+
+          OCacheEntry keyBucketCacheEntry = loadPage(atomicOperation, fileId, bucketSearchResult.getLastPathItem(), false);
+          keyBucketCacheEntry.acquireExclusiveLock();
+          try {
+            OSBTreeBucket<K, V> keyBucket = new OSBTreeBucket<K, V>(keyBucketCacheEntry, keySerializer, keyTypes, valueSerializer,
+                getChanges(atomicOperation, keyBucketCacheEntry));
+
+            final OSBTreeValue<V> removed = keyBucket.getEntry(bucketSearchResult.itemIndex).value;
+            final V value = readValue(removed, atomicOperation);
+
+            long removedValueLink = keyBucket.remove(bucketSearchResult.itemIndex);
+            if (removedValueLink >= 0)
+              removeLinkedValue(removedValueLink, atomicOperation);
+
+            setSize(size() - 1, atomicOperation);
+
+            removedValue = value;
+          } finally {
+            keyBucketCacheEntry.releaseExclusiveLock();
+            releasePage(atomicOperation, keyBucketCacheEntry);
+          }
+        } else {
+          if (getFilledUpTo(atomicOperation, nullBucketFileId) == 0) {
+            endAtomicOperation(false, null);
+            return null;
+          }
+
+          OCacheEntry nullCacheEntry = loadPage(atomicOperation, nullBucketFileId, 0, false);
+          nullCacheEntry.acquireExclusiveLock();
+          try {
+            ONullBucket<V> nullBucket = new ONullBucket<V>(nullCacheEntry, getChanges(atomicOperation, nullCacheEntry),
+                valueSerializer, false);
+            OSBTreeValue<V> treeValue = nullBucket.getValue();
+
+            if (treeValue != null) {
+              removedValue = readValue(treeValue, atomicOperation);
+              nullBucket.removeValue();
+            } else
+              removedValue = null;
+          } finally {
+            nullCacheEntry.releaseExclusiveLock();
+            releasePage(atomicOperation, nullCacheEntry);
+          }
+
+          if (removedValue != null)
+            setSize(size() - 1, atomicOperation);
+        }
+
+        endAtomicOperation(false, null);
+        return removedValue;
+      } catch (IOException e) {
+        rollback(e);
+
+        throw OException
+            .wrapException(new OSBTreeException("Error during removing key " + key + " from sbtree " + getName(), this), e);
+      } catch (RuntimeException e) {
+        rollback(e);
+        throw e;
+      } finally {
+        releaseExclusiveLock();
+      }
+    } finally {
+      if (statistic != null)
+        statistic.stopIndexEntryDeletionTimer();
+      completeOperation();
+    }
+  }
+
+  public OSBTreeCursor<K, V> iterateEntriesMinor(K key, boolean inclusive, boolean ascSortOrder) {
+    final OSessionStoragePerformanceStatistic statistic = performanceStatisticManager.getSessionPerformanceStatistic();
+
+    startOperation();
+    if (statistic != null)
+      statistic.startIndexEntryReadTimer();
+    try {
+      atomicOperationsManager.acquireReadLock(this);
+      try {
+        acquireSharedLock();
+        try {
+          OAtomicOperation atomicOperation = atomicOperationsManager.getCurrentOperation();
+
+          if (!ascSortOrder)
+            return iterateEntriesMinorDesc(key, inclusive, atomicOperation);
+
+          return iterateEntriesMinorAsc(key, inclusive, atomicOperation);
+        } finally {
+          releaseSharedLock();
+        }
+      } catch (IOException ioe) {
+        throw OException.wrapException(
+            new OSBTreeException("Error during iteration of minor values for key " + key + " in sbtree " + getName(), this), ioe);
+      } finally {
+        atomicOperationsManager.releaseReadLock(this);
+      }
+    } finally {
+      if (statistic != null)
+        statistic.stopIndexEntryReadTimer();
+      completeOperation();
+    }
+  }
+
+  public OSBTreeCursor<K, V> iterateEntriesMajor(K key, boolean inclusive, boolean ascSortOrder) {
+    final OSessionStoragePerformanceStatistic statistic = performanceStatisticManager.getSessionPerformanceStatistic();
+    startOperation();
+    if (statistic != null)
+      statistic.startIndexEntryReadTimer();
+    try {
+      atomicOperationsManager.acquireReadLock(this);
+      try {
+        acquireSharedLock();
+        try {
+          OAtomicOperation atomicOperation = atomicOperationsManager.getCurrentOperation();
+
+          if (ascSortOrder)
+            return iterateEntriesMajorAsc(key, inclusive, atomicOperation);
+
+          return iterateEntriesMajorDesc(key, inclusive, atomicOperation);
+        } finally {
+          releaseSharedLock();
+        }
+      } catch (IOException ioe) {
+        throw OException.wrapException(
+            new OSBTreeException("Error during iteration of major values for key " + key + " in sbtree " + getName(), this), ioe);
+      } finally {
+        atomicOperationsManager.releaseReadLock(this);
+      }
+    } finally {
+      if (statistic != null)
+        statistic.stopIndexEntryReadTimer();
+      completeOperation();
+    }
+  }
+
+  public K firstKey() {
+    final OSessionStoragePerformanceStatistic statistic = performanceStatisticManager.getSessionPerformanceStatistic();
+    startOperation();
+    if (statistic != null)
+      statistic.startIndexEntryReadTimer();
+    try {
+      atomicOperationsManager.acquireReadLock(this);
+      try {
+        acquireSharedLock();
+        try {
+          OAtomicOperation atomicOperation = atomicOperationsManager.getCurrentOperation();
+
+          final BucketSearchResult searchResult = firstItem(atomicOperation);
+          if (searchResult == null)
+            return null;
+
+          final OCacheEntry cacheEntry = loadPage(atomicOperation, fileId, searchResult.getLastPathItem(), false);
+          cacheEntry.acquireSharedLock();
+          try {
+            OSBTreeBucket<K, V> bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
+                getChanges(atomicOperation, cacheEntry));
+            return bucket.getKey(searchResult.itemIndex);
+          } finally {
+            cacheEntry.releaseSharedLock();
+            releasePage(atomicOperation, cacheEntry);
+          }
+        } finally {
+          releaseSharedLock();
+        }
+      } catch (IOException e) {
+        throw OException
+            .wrapException(new OSBTreeException("Error during finding first key in sbtree [" + getName() + "]", this), e);
+      } finally {
+        atomicOperationsManager.releaseReadLock(this);
+      }
+    } finally {
+      if (statistic != null)
+        statistic.stopIndexEntryReadTimer();
+      completeOperation();
+    }
+  }
+
+  public K lastKey() {
+    final OSessionStoragePerformanceStatistic statistic = performanceStatisticManager.getSessionPerformanceStatistic();
+
+    startOperation();
+    if (statistic != null)
+      statistic.startIndexEntryReadTimer();
+    try {
+      atomicOperationsManager.acquireReadLock(this);
+      try {
+        acquireSharedLock();
+        try {
+          OAtomicOperation atomicOperation = atomicOperationsManager.getCurrentOperation();
+
+          final BucketSearchResult searchResult = lastItem(atomicOperation);
+          if (searchResult == null)
+            return null;
+
+          final OCacheEntry cacheEntry = loadPage(atomicOperation, fileId, searchResult.getLastPathItem(), false);
+          cacheEntry.acquireSharedLock();
+          try {
+            OSBTreeBucket<K, V> bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
+                getChanges(atomicOperation, cacheEntry));
+            return bucket.getKey(searchResult.itemIndex);
+          } finally {
+            cacheEntry.releaseSharedLock();
+            releasePage(atomicOperation, cacheEntry);
+          }
+        } finally {
+          releaseSharedLock();
+        }
+      } catch (IOException e) {
+        throw OException
+            .wrapException(new OSBTreeException("Error during finding last key in sbtree [" + getName() + "]", this), e);
+      } finally {
+        atomicOperationsManager.releaseReadLock(this);
+      }
+    } finally {
+      if (statistic != null)
+        statistic.stopIndexEntryReadTimer();
+      completeOperation();
+    }
+  }
+
+  public OSBTreeKeyCursor<K> keyCursor() {
+    final OSessionStoragePerformanceStatistic statistic = performanceStatisticManager.getSessionPerformanceStatistic();
+
+    startOperation();
+    if (statistic != null)
+      statistic.startIndexEntryReadTimer();
+    try {
+      atomicOperationsManager.acquireReadLock(this);
+      try {
+        acquireSharedLock();
+        try {
+          OAtomicOperation atomicOperation = atomicOperationsManager.getCurrentOperation();
+          final BucketSearchResult searchResult = firstItem(atomicOperation);
+          if (searchResult == null)
+            return new OSBTreeKeyCursor<K>() {
+              @Override
+              public K next(int prefetchSize) {
+                return null;
+              }
+            };
+
+          return new OSBTreeFullKeyCursor(searchResult.getLastPathItem());
+        } finally {
+          releaseSharedLock();
+        }
+      } catch (IOException e) {
+        throw OException
+            .wrapException(new OSBTreeException("Error during finding first key in sbtree [" + getName() + "]", this), e);
+      } finally {
+        atomicOperationsManager.releaseReadLock(this);
+      }
+    } finally {
+      if (statistic != null)
+        statistic.stopIndexEntryReadTimer();
+      completeOperation();
+    }
+  }
+
+  public OSBTreeCursor<K, V> iterateEntriesBetween(K keyFrom, boolean fromInclusive, K keyTo, boolean toInclusive,
+      boolean ascSortOrder) {
+    final OSessionStoragePerformanceStatistic statistic = performanceStatisticManager.getSessionPerformanceStatistic();
+    startOperation();
+    if (statistic != null)
+      statistic.startIndexEntryReadTimer();
+    try {
+      atomicOperationsManager.acquireReadLock(this);
+      try {
+        acquireSharedLock();
+        try {
+          OAtomicOperation atomicOperation = atomicOperationsManager.getCurrentOperation();
+          if (ascSortOrder)
+            return iterateEntriesBetweenAscOrder(keyFrom, fromInclusive, keyTo, toInclusive, atomicOperation);
+          else
+            return iterateEntriesBetweenDescOrder(keyFrom, fromInclusive, keyTo, toInclusive, atomicOperation);
+        } finally {
+          releaseSharedLock();
+        }
+      } catch (IOException ioe) {
+        throw OException.wrapException(new OSBTreeException(
+            "Error during fetch of values between key " + keyFrom + " and key " + keyTo + " in sbtree " + getName(), this), ioe);
+      } finally {
+        atomicOperationsManager.releaseReadLock(this);
+      }
+    } finally {
+      if (statistic != null)
+        statistic.stopIndexEntryReadTimer();
+      completeOperation();
+    }
+  }
+
+  public void flush() {
+    startOperation();
+    try {
+      atomicOperationsManager.acquireReadLock(this);
+      try {
+        acquireSharedLock();
+        try {
+          writeCache.flush();
+        } finally {
+          releaseSharedLock();
+        }
+      } finally {
+        atomicOperationsManager.releaseReadLock(this);
+      }
+    } finally {
+      completeOperation();
+    }
+  }
+
+  /**
+   * Acquires exclusive lock in the active atomic operation running on the current thread for this SB-tree.
+   */
+  public void acquireAtomicExclusiveLock() {
+    atomicOperationsManager.acquireExclusiveLockTillOperationComplete(this);
+  }
+
+  private void checkNullSupport(K key) {
+    if (key == null && !nullPointerSupport)
+      throw new OSBTreeException("Null keys are not supported.", this);
+  }
+
+  @SuppressWarnings("unchecked")
+  private boolean put(K key, V value, OIndexEngine.Validator<K, V> validator) {
+    final OSessionStoragePerformanceStatistic statistic = performanceStatisticManager.getSessionPerformanceStatistic();
+    startOperation();
+    if (statistic != null)
+      statistic.startIndexEntryUpdateTimer();
+    try {
+      final OAtomicOperation atomicOperation;
+      try {
+        atomicOperation = startAtomicOperation(true);
+      } catch (IOException e) {
+        throw OException.wrapException(new OSBTreeException("Error during sbtree entrie put", this), e);
+      }
+
+      acquireExclusiveLock();
+      try {
+        checkNullSupport(key);
+
+        if (key != null) {
+          final int keySize = keySerializer.getObjectSize(key, (Object[]) keyTypes);
+
+          final int valueSize = valueSerializer.getObjectSize(value);
+          if (keySize > MAX_KEY_SIZE)
+            throw new OTooBigIndexKeyException(
+                "Key size is more than allowed, operation was canceled. Current key size " + keySize + ", allowed  " + MAX_KEY_SIZE,
+                getName());
+
+          final boolean createLinkToTheValue = valueSize > MAX_EMBEDDED_VALUE_SIZE;
+
+          key = keySerializer.preprocess(key, (Object[]) keyTypes);
           long valueLink = -1;
           if (createLinkToTheValue)
-            valueLink = createLinkToTheValue(value);
+            valueLink = createLinkToTheValue(value, atomicOperation);
 
-          final OSBTreeValue<V> treeValue = new OSBTreeValue<V>(createLinkToTheValue, valueLink, createLinkToTheValue ? null
-              : value);
-          BucketSearchResult bucketSearchResult = findBucket(key);
+          final OSBTreeValue<V> treeValue = new OSBTreeValue<V>(createLinkToTheValue, valueLink,
+              createLinkToTheValue ? null : value);
+          BucketSearchResult bucketSearchResult = findBucket(key, atomicOperation);
 
-          OCacheEntry keyBucketCacheEntry = diskCache.load(fileId, bucketSearchResult.getLastPathItem(), false);
+          OCacheEntry keyBucketCacheEntry = loadPage(atomicOperation, fileId, bucketSearchResult.getLastPathItem(), false);
           keyBucketCacheEntry.acquireExclusiveLock();
           OSBTreeBucket<K, V> keyBucket = new OSBTreeBucket<K, V>(keyBucketCacheEntry, keySerializer, keyTypes, valueSerializer,
-              getTrackMode());
+              getChanges(atomicOperation, keyBucketCacheEntry));
+
+          if (validator != null) {
+            boolean failure = true; // assuming validation throws by default
+            boolean ignored = false;
+
+            try {
+              final V oldValue = bucketSearchResult.itemIndex > -1 ?
+                  readValue(keyBucket.getValue(bucketSearchResult.itemIndex), atomicOperation) :
+                  null;
+
+              final Object result = validator.validate(key, oldValue, value);
+              if (result == OIndexEngine.Validator.IGNORE) {
+                ignored = true;
+                failure = false;
+                return false;
+              }
+
+              value = (V) result;
+              failure = false;
+            } finally {
+              if (failure || ignored) {
+                keyBucketCacheEntry.releaseExclusiveLock();
+                releasePage(atomicOperation, keyBucketCacheEntry);
+              }
+              if (ignored) // in case of a failure atomic operation will be ended in a usual way below
+                endAtomicOperation(false, null);
+            }
+          }
 
           int insertionIndex;
           int sizeDiff;
           if (bucketSearchResult.itemIndex >= 0) {
             int updateResult = keyBucket.updateValue(bucketSearchResult.itemIndex, treeValue);
 
-            if (updateResult == 1) {
-              logPageChanges(keyBucket, fileId, keyBucketCacheEntry.getPageIndex(), false);
-              keyBucketCacheEntry.markDirty();
-            }
-
             if (updateResult >= 0) {
               keyBucketCacheEntry.releaseExclusiveLock();
-              diskCache.release(keyBucketCacheEntry);
+              releasePage(atomicOperation, keyBucketCacheEntry);
 
-              endAtomicOperation(false);
-              return;
+              endAtomicOperation(false, null);
+              return true;
             } else {
               assert updateResult == -1;
 
               long removedLinkedValue = keyBucket.remove(bucketSearchResult.itemIndex);
               if (removedLinkedValue >= 0)
-                removeLinkedValue(removedLinkedValue);
+                removeLinkedValue(removedLinkedValue, atomicOperation);
 
               insertionIndex = bucketSearchResult.itemIndex;
               sizeDiff = 0;
@@ -289,600 +916,210 @@ public class OSBTree<K, V> extends ODurableComponent {
           }
 
           while (!keyBucket.addEntry(insertionIndex, new OSBTreeBucket.SBTreeEntry<K, V>(-1, -1, key, treeValue), true)) {
-            logPageChanges(keyBucket, fileId, keyBucketCacheEntry.getPageIndex(), false);
-
             keyBucketCacheEntry.releaseExclusiveLock();
-            diskCache.release(keyBucketCacheEntry);
+            releasePage(atomicOperation, keyBucketCacheEntry);
 
-            bucketSearchResult = splitBucket(bucketSearchResult.path, insertionIndex, key);
+            bucketSearchResult = splitBucket(bucketSearchResult.path, insertionIndex, key, atomicOperation);
 
             insertionIndex = bucketSearchResult.itemIndex;
 
-            keyBucketCacheEntry = diskCache.load(fileId, bucketSearchResult.getLastPathItem(), false);
+            keyBucketCacheEntry = loadPage(atomicOperation, fileId, bucketSearchResult.getLastPathItem(), false);
             keyBucketCacheEntry.acquireExclusiveLock();
 
-            keyBucket = new OSBTreeBucket<K, V>(keyBucketCacheEntry, keySerializer, keyTypes, valueSerializer, getTrackMode());
+            keyBucket = new OSBTreeBucket<K, V>(keyBucketCacheEntry, keySerializer, keyTypes, valueSerializer,
+                getChanges(atomicOperation, keyBucketCacheEntry));
           }
 
-          logPageChanges(keyBucket, fileId, bucketSearchResult.getLastPathItem(), false);
-
-          keyBucketCacheEntry.markDirty();
           keyBucketCacheEntry.releaseExclusiveLock();
-          diskCache.release(keyBucketCacheEntry);
+          releasePage(atomicOperation, keyBucketCacheEntry);
 
           if (sizeDiff != 0)
-            setSize(size() + sizeDiff);
+            setSize(size() + sizeDiff, atomicOperation);
+        } else {
+          OCacheEntry cacheEntry;
+          boolean isNew = false;
 
-          endAtomicOperation(false);
-        } catch (Throwable e) {
-          rollback(transaction);
-          throw new OSBTreeException(e);
-        }
-      } else {
-        OCacheEntry cacheEntry;
-        boolean isNew = false;
+          if (getFilledUpTo(atomicOperation, nullBucketFileId) == 0) {
+            cacheEntry = addPage(atomicOperation, nullBucketFileId);
+            isNew = true;
+          } else
+            cacheEntry = loadPage(atomicOperation, nullBucketFileId, 0, false);
 
-        if (diskCache.getFilledUpTo(nullBucketFileId) == 0) {
-          cacheEntry = diskCache.allocateNewPage(nullBucketFileId);
-          isNew = true;
-        } else
-          cacheEntry = diskCache.load(nullBucketFileId, 0, false);
-
-        startAtomicOperation();
-        try {
           final int valueSize = valueSerializer.getObjectSize(value);
           final boolean createLinkToTheValue = valueSize > MAX_EMBEDDED_VALUE_SIZE;
 
           long valueLink = -1;
           if (createLinkToTheValue)
-            valueLink = createLinkToTheValue(value);
+            valueLink = createLinkToTheValue(value, atomicOperation);
 
-          final OSBTreeValue<V> treeValue = new OSBTreeValue<V>(createLinkToTheValue, valueLink, createLinkToTheValue ? null
-              : value);
+          final OSBTreeValue<V> treeValue = new OSBTreeValue<V>(createLinkToTheValue, valueLink,
+              createLinkToTheValue ? null : value);
 
           int sizeDiff = 0;
 
+          boolean ignored = false;
           cacheEntry.acquireExclusiveLock();
           try {
-            final ONullBucket<V> nullBucket = new ONullBucket<V>(cacheEntry, getTrackMode(), valueSerializer, isNew);
+            final ONullBucket<V> nullBucket = new ONullBucket<V>(cacheEntry, getChanges(atomicOperation, cacheEntry),
+                valueSerializer, isNew);
+            final OSBTreeValue<V> oldValue = nullBucket.getValue();
 
-            if (nullBucket.getValue() != null)
+            if (validator != null) {
+              final V oldValueValue = oldValue == null ? null : readValue(oldValue, atomicOperation);
+
+              final Object result = validator.validate(null, oldValueValue, value);
+              if (result == OIndexEngine.Validator.IGNORE) {
+                ignored = true;
+                return false;
+              }
+
+              value = (V) result;
+            }
+
+            if (oldValue != null)
               sizeDiff = -1;
 
             nullBucket.setValue(treeValue);
-            logPageChanges(nullBucket, nullBucketFileId, 0, isNew);
-
-            cacheEntry.markDirty();
           } finally {
             cacheEntry.releaseExclusiveLock();
-            diskCache.release(cacheEntry);
+            releasePage(atomicOperation, cacheEntry);
+            if (ignored)
+              endAtomicOperation(false, null);
           }
 
           sizeDiff++;
 
-          setSize(size() + sizeDiff);
-          endAtomicOperation(false);
-        } catch (Throwable e) {
-          rollback(transaction);
-          throw new OSBTreeException(e);
+          setSize(size() + sizeDiff, atomicOperation);
         }
-      }
-    } catch (IOException e) {
-      rollback(transaction);
-      throw new OSBTreeException("Error during index update with key " + key + " and value " + value, e);
-    } finally {
-      releaseExclusiveLock();
-    }
-  }
 
-  public void close(boolean flush) {
-    acquireExclusiveLock();
-    try {
-      diskCache.closeFile(fileId, flush);
-
-      if (nullPointerSupport)
-        diskCache.closeFile(nullBucketFileId, flush);
-    } catch (IOException e) {
-      throw new OSBTreeException("Error during close of index " + name, e);
-    } finally {
-      releaseExclusiveLock();
-    }
-  }
-
-  public void close() {
-    close(true);
-  }
-
-  public void clear() {
-    acquireExclusiveLock();
-    OStorageTransaction transaction = storage.getStorageTransaction();
-    try {
-      startAtomicOperation();
-
-      diskCache.truncateFile(fileId);
-
-      if (nullPointerSupport)
-        diskCache.truncateFile(nullBucketFileId);
-
-      OCacheEntry cacheEntry = diskCache.load(fileId, ROOT_INDEX, false);
-      cacheEntry.acquireExclusiveLock();
-      try {
-        OSBTreeBucket<K, V> rootBucket = new OSBTreeBucket<K, V>(cacheEntry, true, keySerializer, keyTypes, valueSerializer,
-            getTrackMode());
-
-        rootBucket.setTreeSize(0);
-
-        logPageChanges(rootBucket, fileId, ROOT_INDEX, true);
-        cacheEntry.markDirty();
-      } finally {
-        cacheEntry.releaseExclusiveLock();
-        diskCache.release(cacheEntry);
-      }
-
-      endAtomicOperation(false);
-    } catch (IOException e) {
-      rollback(transaction);
-
-      throw new OSBTreeException("Error during clear of sbtree with name " + name, e);
-    } catch (Throwable e) {
-      rollback(transaction);
-      throw new OSBTreeException(e);
-    } finally {
-      releaseExclusiveLock();
-    }
-  }
-
-  public void delete() {
-    acquireExclusiveLock();
-    try {
-      diskCache.deleteFile(fileId);
-
-      if (nullPointerSupport)
-        diskCache.deleteFile(nullBucketFileId);
-
-    } catch (IOException e) {
-      throw new OSBTreeException("Error during delete of sbtree with name " + name, e);
-    } finally {
-      releaseExclusiveLock();
-    }
-  }
-
-  public void deleteWithoutLoad(String name, OAbstractPaginatedStorage storageLocal) {
-    acquireExclusiveLock();
-    try {
-      final ODiskCache diskCache = storageLocal.getDiskCache();
-
-      final long fileId = diskCache.openFile(name + dataFileExtension);
-      diskCache.deleteFile(fileId);
-
-      final long nullFileId = diskCache.openFile(name + nullFileExtension);
-      diskCache.deleteFile(nullFileId);
-    } catch (IOException ioe) {
-      throw new OSBTreeException("Exception during deletion of sbtree " + name, ioe);
-    } finally {
-      releaseExclusiveLock();
-    }
-  }
-
-  public void load(String name, OBinarySerializer<K> keySerializer, OStreamSerializer valueSerializer, OType[] keyTypes,
-      OAbstractPaginatedStorage storageLocal, int keySize, boolean nullPointerSupport) {
-    acquireExclusiveLock();
-    try {
-      this.keySize = keySize;
-      this.storage = storageLocal;
-      this.keyTypes = keyTypes;
-
-      diskCache = storage.getDiskCache();
-
-      this.name = name;
-      this.nullPointerSupport = nullPointerSupport;
-
-      fileId = diskCache.openFile(name + dataFileExtension);
-      if (nullPointerSupport)
-        nullBucketFileId = diskCache.openFile(name + nullFileExtension);
-
-      this.keySerializer = keySerializer;
-      this.valueSerializer = (OBinarySerializer<V>) valueSerializer;
-
-      initDurableComponent(storageLocal);
-    } catch (IOException e) {
-      throw new OSBTreeException("Exception during loading of sbtree " + name, e);
-    } finally {
-      releaseExclusiveLock();
-    }
-  }
-
-  public long size() {
-    acquireSharedLock();
-    try {
-      OCacheEntry rootCacheEntry = diskCache.load(fileId, ROOT_INDEX, false);
-      try {
-        OSBTreeBucket<K, V> rootBucket = new OSBTreeBucket<K, V>(rootCacheEntry, keySerializer, keyTypes, valueSerializer,
-            ODurablePage.TrackMode.NONE);
-        return rootBucket.getTreeSize();
-      } finally {
-        diskCache.release(rootCacheEntry);
-      }
-    } catch (IOException e) {
-      throw new OSBTreeException("Error during retrieving of size of index " + name);
-    } finally {
-      releaseSharedLock();
-    }
-  }
-
-  public V remove(K key) {
-    acquireExclusiveLock();
-    OStorageTransaction transaction = storage.getStorageTransaction();
-    try {
-      if (key != null) {
-        key = keySerializer.preprocess(key, (Object[]) keyTypes);
-
-        BucketSearchResult bucketSearchResult = findBucket(key);
-        if (bucketSearchResult.itemIndex < 0)
-          return null;
-
-        OCacheEntry keyBucketCacheEntry = diskCache.load(fileId, bucketSearchResult.getLastPathItem(), false);
-        keyBucketCacheEntry.acquireExclusiveLock();
-        try {
-          startAtomicOperation();
-
-          OSBTreeBucket<K, V> keyBucket = new OSBTreeBucket<K, V>(keyBucketCacheEntry, keySerializer, keyTypes, valueSerializer,
-              getTrackMode());
-
-          final OSBTreeValue<V> removed = keyBucket.getEntry(bucketSearchResult.itemIndex).value;
-          final V value = readValue(removed);
-
-          long removedValueLink = keyBucket.remove(bucketSearchResult.itemIndex);
-          if (removedValueLink >= 0)
-            removeLinkedValue(removedValueLink);
-
-          logPageChanges(keyBucket, fileId, keyBucketCacheEntry.getPageIndex(), false);
-          keyBucketCacheEntry.markDirty();
-
-          setSize(size() - 1);
-          endAtomicOperation(false);
-
-          return value;
-        } catch (Throwable e) {
-          rollback(transaction);
-          throw new OSBTreeException(e);
-        } finally {
-          keyBucketCacheEntry.releaseExclusiveLock();
-          diskCache.release(keyBucketCacheEntry);
-        }
-      } else {
-        if (diskCache.getFilledUpTo(nullBucketFileId) == 0)
-          return null;
-
-        startAtomicOperation();
-        try {
-          V removedValue = null;
-
-          OCacheEntry nullCacheEntry = diskCache.load(nullBucketFileId, 0, false);
-          nullCacheEntry.acquireExclusiveLock();
-          try {
-            ONullBucket<V> nullBucket = new ONullBucket<V>(nullCacheEntry, getTrackMode(), valueSerializer, false);
-            OSBTreeValue<V> treeValue = nullBucket.getValue();
-            if (treeValue == null)
-              return null;
-
-            removedValue = readValue(treeValue);
-            nullBucket.removeValue();
-            logPageChanges(nullBucket, nullBucketFileId, 0, false);
-          } finally {
-            nullCacheEntry.releaseExclusiveLock();
-            diskCache.release(nullCacheEntry);
-          }
-
-          if (removedValue != null)
-            setSize(size() - 1);
-
-          endAtomicOperation(false);
-
-          return removedValue;
-        } catch (Throwable e) {
-          rollback(transaction);
-          throw new OSBTreeException(e);
-        }
-      }
-    } catch (IOException e) {
-      rollback(transaction);
-
-      throw new OSBTreeException("Error during removing key " + key + " from sbtree " + name, e);
-    } finally {
-      releaseExclusiveLock();
-    }
-  }
-
-  public OSBTreeCursor<K, V> iterateEntriesMinor(K key, boolean inclusive, boolean ascSortOrder) {
-    acquireSharedLock();
-    try {
-      if (!ascSortOrder)
-        return iterateEntriesMinorDesc(key, inclusive);
-
-      return iterateEntriesMinorAsc(key, inclusive);
-    } catch (IOException ioe) {
-      throw new OSBTreeException("Error during iteration of minor values for key " + key + " in sbtree " + name);
-    } finally {
-      releaseSharedLock();
-    }
-  }
-
-  public OSBTreeCursor<K, V> iterateEntriesMajor(K key, boolean inclusive, boolean ascSortOrder) {
-    acquireSharedLock();
-    try {
-      if (ascSortOrder)
-        return iterateEntriesMajorAsc(key, inclusive);
-
-      return iterateEntriesMajorDesc(key, inclusive);
-    } catch (IOException ioe) {
-      throw new OSBTreeException("Error during iteration of major values for key " + key + " in sbtree " + name);
-    } finally {
-      releaseSharedLock();
-    }
-  }
-
-  public K firstKey() {
-    acquireSharedLock();
-    try {
-      final BucketSearchResult searchResult = firstItem();
-      if (searchResult == null)
-        return null;
-
-      final OCacheEntry cacheEntry = diskCache.load(fileId, searchResult.getLastPathItem(), false);
-      try {
-        OSBTreeBucket<K, V> bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
-            ODurablePage.TrackMode.NONE);
-        return bucket.getKey(searchResult.itemIndex);
-      } finally {
-        diskCache.release(cacheEntry);
-      }
-    } catch (IOException e) {
-      throw new OSBTreeException("Error during finding first key in sbtree [" + name + "]");
-    } finally {
-      releaseSharedLock();
-    }
-  }
-
-  public K lastKey() {
-    acquireSharedLock();
-    try {
-      final BucketSearchResult searchResult = lastItem();
-      if (searchResult == null)
-        return null;
-
-      final OCacheEntry cacheEntry = diskCache.load(fileId, searchResult.getLastPathItem(), false);
-      try {
-        OSBTreeBucket<K, V> bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
-            ODurablePage.TrackMode.NONE);
-        return bucket.getKey(searchResult.itemIndex);
-      } finally {
-        diskCache.release(cacheEntry);
-      }
-    } catch (IOException e) {
-      throw new OSBTreeException("Error during finding last key in sbtree [" + name + "]");
-    } finally {
-      releaseSharedLock();
-    }
-  }
-
-  public OSBTreeKeyCursor<K> keyCursor() {
-    acquireSharedLock();
-    try {
-      final BucketSearchResult searchResult = firstItem();
-      if (searchResult == null)
-        return new OSBTreeKeyCursor<K>() {
-          @Override
-          public K next(int prefetchSize) {
-            return null;
-          }
-        };
-
-      return new OSBTreeFullKeyCursor(searchResult.getLastPathItem());
-    } catch (IOException e) {
-      throw new OSBTreeException("Error during finding first key in sbtree [" + name + "]");
-    } finally {
-      releaseSharedLock();
-    }
-  }
-
-  public OSBTreeCursor<K, V> iterateEntriesBetween(K keyFrom, boolean fromInclusive, K keyTo, boolean toInclusive,
-      boolean ascSortOrder) {
-    acquireSharedLock();
-    try {
-      if (ascSortOrder)
-        return iterateEntriesBetweenAscOrder(keyFrom, fromInclusive, keyTo, toInclusive);
-      else
-        return iterateEntriesBetweenDescOrder(keyFrom, fromInclusive, keyTo, toInclusive);
-
-    } catch (IOException ioe) {
-      throw new OSBTreeException("Error during fetch of values between key " + keyFrom + " and key " + keyTo + " in sbtree " + name);
-    } finally {
-      releaseSharedLock();
-    }
-  }
-
-  public void flush() {
-    acquireSharedLock();
-    try {
-      try {
-        diskCache.flushBuffer();
+        endAtomicOperation(false, null);
+        return true;
       } catch (IOException e) {
-        throw new OSBTreeException("Error during flush of sbtree [" + name + "] data");
+        rollback(e);
+        throw OException
+            .wrapException(new OSBTreeException("Error during index update with key " + key + " and value " + value, this), e);
+      } catch (RuntimeException e) {
+        rollback(e);
+        throw e;
+      } finally {
+        releaseExclusiveLock();
       }
     } finally {
-      releaseSharedLock();
+      if (statistic != null)
+        statistic.stopIndexEntryUpdateTimer();
+      completeOperation();
     }
   }
 
-  @Override
-  protected void endAtomicOperation(boolean rollback) throws IOException {
-    if (storage.getStorageTransaction() == null && !durableInNonTxMode)
-      return;
-
-    super.endAtomicOperation(rollback);
-  }
-
-  @Override
-  protected void startAtomicOperation() throws IOException {
-    if (storage.getStorageTransaction() == null && !durableInNonTxMode)
-      return;
-
-    super.startAtomicOperation();
-  }
-
-  @Override
-  protected void logPageChanges(ODurablePage localPage, long fileId, long pageIndex, boolean isNewPage) throws IOException {
-    final OStorageTransaction transaction = storage.getStorageTransaction();
-    if (transaction == null && !durableInNonTxMode)
-      return;
-
-    super.logPageChanges(localPage, fileId, pageIndex, isNewPage);
-  }
-
-  @Override
-  protected ODurablePage.TrackMode getTrackMode() {
-    final OStorageTransaction transaction = storage.getStorageTransaction();
-    if (transaction == null && !durableInNonTxMode)
-      return ODurablePage.TrackMode.NONE;
-
-    final ODurablePage.TrackMode trackMode = super.getTrackMode();
-    if (!trackMode.equals(ODurablePage.TrackMode.NONE))
-      return this.trackMode;
-
-    return trackMode;
-  }
-
-  private void initDurableComponent(OAbstractPaginatedStorage storageLocal) {
-    init(storageLocal);
-  }
-
-  private void checkNullSupport(K key) {
-    if (key == null && !nullPointerSupport)
-      throw new OSBTreeException("Null keys are not supported.");
-  }
-
-  private void removeLinkedValue(long removedLink) throws IOException {
+  private void removeLinkedValue(long removedLink, OAtomicOperation atomicOperation) throws IOException {
     long nextPage = removedLink;
     do {
       removedLink = nextPage;
 
-      OCacheEntry valueEntry = diskCache.load(fileId, removedLink, false);
+      OCacheEntry valueEntry = loadPage(atomicOperation, fileId, removedLink, false);
+      valueEntry.acquireSharedLock();
       try {
-        OSBTreeValuePage valuePage = new OSBTreeValuePage(valueEntry, getTrackMode(), false);
+        OSBTreeValuePage valuePage = new OSBTreeValuePage(valueEntry, getChanges(atomicOperation, valueEntry), false);
         nextPage = valuePage.getNextPage();
       } finally {
-        diskCache.release(valueEntry);
+        valueEntry.releaseSharedLock();
+        releasePage(atomicOperation, valueEntry);
       }
 
-      removeValuePage(removedLink);
+      removeValuePage(removedLink, atomicOperation);
     } while (nextPage >= 0);
   }
 
-  private void removeValuePage(long pageIndex) throws IOException {
+  private void removeValuePage(long pageIndex, OAtomicOperation atomicOperation) throws IOException {
     long prevFreeListItem;
-    OCacheEntry rootCacheEntry = diskCache.load(fileId, ROOT_INDEX, false);
+
+    OCacheEntry rootCacheEntry = loadPage(atomicOperation, fileId, ROOT_INDEX, false);
+
     rootCacheEntry.acquireExclusiveLock();
     OSBTreeBucket<K, V> rootBucket = new OSBTreeBucket<K, V>(rootCacheEntry, keySerializer, keyTypes, valueSerializer,
-        getTrackMode());
+        getChanges(atomicOperation, rootCacheEntry));
     try {
       prevFreeListItem = rootBucket.getValuesFreeListFirstIndex();
       rootBucket.setValuesFreeListFirstIndex(pageIndex);
-
-      rootCacheEntry.markDirty();
-      logPageChanges(rootBucket, fileId, ROOT_INDEX, false);
     } finally {
       rootCacheEntry.releaseExclusiveLock();
-      diskCache.release(rootCacheEntry);
+      releasePage(atomicOperation, rootCacheEntry);
     }
 
-    OCacheEntry valueEntry = diskCache.load(fileId, pageIndex, false);
+    OCacheEntry valueEntry = loadPage(atomicOperation, fileId, pageIndex, false);
     valueEntry.acquireExclusiveLock();
     try {
-      OSBTreeValuePage valuePage = new OSBTreeValuePage(valueEntry, getTrackMode(), false);
+      OSBTreeValuePage valuePage = new OSBTreeValuePage(valueEntry, getChanges(atomicOperation, valueEntry), false);
       valuePage.setNextFreeListPage(prevFreeListItem);
-
-      valueEntry.markDirty();
-      logPageChanges(valuePage, fileId, pageIndex, false);
     } finally {
       valueEntry.releaseExclusiveLock();
-      diskCache.release(valueEntry);
+      releasePage(atomicOperation, valueEntry);
     }
   }
 
-  private long createLinkToTheValue(V value) throws IOException {
+  private long createLinkToTheValue(V value, OAtomicOperation atomicOperation) throws IOException {
     byte[] serializeValue = new byte[valueSerializer.getObjectSize(value)];
     valueSerializer.serializeNativeObject(value, serializeValue, 0);
 
     final int amountOfPages = OSBTreeValuePage.calculateAmountOfPage(serializeValue.length);
 
     int position = 0;
-    long freeListPageIndex = allocateValuePageFromFreeList();
+    long freeListPageIndex = allocateValuePageFromFreeList(atomicOperation);
 
     OCacheEntry cacheEntry;
     if (freeListPageIndex < 0)
-      cacheEntry = diskCache.allocateNewPage(fileId);
+      cacheEntry = addPage(atomicOperation, fileId);
     else
-      cacheEntry = diskCache.load(fileId, freeListPageIndex, false);
+      cacheEntry = loadPage(atomicOperation, fileId, freeListPageIndex, false);
 
     final long valueLink = cacheEntry.getPageIndex();
     cacheEntry.acquireExclusiveLock();
     try {
-      OSBTreeValuePage valuePage = new OSBTreeValuePage(cacheEntry, getTrackMode(), freeListPageIndex >= 0);
+      OSBTreeValuePage valuePage = new OSBTreeValuePage(cacheEntry, getChanges(atomicOperation, cacheEntry),
+          freeListPageIndex >= 0);
       position = valuePage.fillBinaryContent(serializeValue, position);
 
       valuePage.setNextFreeListPage(-1);
       valuePage.setNextPage(-1);
 
-      cacheEntry.markDirty();
-
-      if (freeListPageIndex < 0)
-        logPageChanges(valuePage, fileId, cacheEntry.getPageIndex(), true);
-      else
-        logPageChanges(valuePage, fileId, cacheEntry.getPageIndex(), false);
     } finally {
       cacheEntry.releaseExclusiveLock();
-      diskCache.release(cacheEntry);
+      releasePage(atomicOperation, cacheEntry);
     }
 
     long prevPage = valueLink;
     for (int i = 1; i < amountOfPages; i++) {
-      freeListPageIndex = allocateValuePageFromFreeList();
+      freeListPageIndex = allocateValuePageFromFreeList(atomicOperation);
 
       if (freeListPageIndex < 0)
-        cacheEntry = diskCache.allocateNewPage(fileId);
+        cacheEntry = addPage(atomicOperation, fileId);
       else
-        cacheEntry = diskCache.load(fileId, freeListPageIndex, false);
+        cacheEntry = loadPage(atomicOperation, fileId, freeListPageIndex, false);
 
       cacheEntry.acquireExclusiveLock();
       try {
-        OSBTreeValuePage valuePage = new OSBTreeValuePage(cacheEntry, getTrackMode(), freeListPageIndex >= 0);
+        OSBTreeValuePage valuePage = new OSBTreeValuePage(cacheEntry, getChanges(atomicOperation, cacheEntry),
+            freeListPageIndex >= 0);
         position = valuePage.fillBinaryContent(serializeValue, position);
 
         valuePage.setNextFreeListPage(-1);
         valuePage.setNextPage(-1);
 
-        cacheEntry.markDirty();
-        if (freeListPageIndex < 0)
-          logPageChanges(valuePage, fileId, cacheEntry.getPageIndex(), true);
-        else
-          logPageChanges(valuePage, fileId, cacheEntry.getPageIndex(), false);
       } finally {
         cacheEntry.releaseExclusiveLock();
-        diskCache.release(cacheEntry);
+        releasePage(atomicOperation, cacheEntry);
       }
 
-      OCacheEntry prevPageCacheEntry = diskCache.load(fileId, prevPage, false);
+      OCacheEntry prevPageCacheEntry = loadPage(atomicOperation, fileId, prevPage, false);
       prevPageCacheEntry.acquireExclusiveLock();
       try {
-        OSBTreeValuePage valuePage = new OSBTreeValuePage(prevPageCacheEntry, getTrackMode(), freeListPageIndex >= 0);
+        OSBTreeValuePage valuePage = new OSBTreeValuePage(prevPageCacheEntry, getChanges(atomicOperation, prevPageCacheEntry),
+            freeListPageIndex >= 0);
         valuePage.setNextPage(cacheEntry.getPageIndex());
 
-        prevPageCacheEntry.markDirty();
-        logPageChanges(valuePage, fileId, prevPage, false);
       } finally {
         prevPageCacheEntry.releaseExclusiveLock();
-        diskCache.release(prevPageCacheEntry);
+        releasePage(atomicOperation, prevPageCacheEntry);
       }
 
       prevPage = cacheEntry.getPageIndex();
@@ -891,45 +1128,44 @@ public class OSBTree<K, V> extends ODurableComponent {
     return valueLink;
   }
 
-  private long allocateValuePageFromFreeList() throws IOException {
-    OCacheEntry rootCacheEntry = diskCache.load(fileId, ROOT_INDEX, false);
-    OSBTreeBucket<K, V> rootBucket = new OSBTreeBucket<K, V>(rootCacheEntry, keySerializer, keyTypes, valueSerializer,
-        ODurablePage.TrackMode.NONE);
+  private long allocateValuePageFromFreeList(OAtomicOperation atomicOperation) throws IOException {
+    OCacheEntry rootCacheEntry = loadPage(atomicOperation, fileId, ROOT_INDEX, false);
+    assert rootCacheEntry != null;
+
+    rootCacheEntry.acquireSharedLock();
     long freeListFirstIndex;
+    OSBTreeBucket<K, V> rootBucket;
     try {
+      rootBucket = new OSBTreeBucket<K, V>(rootCacheEntry, keySerializer, keyTypes, valueSerializer,
+          getChanges(atomicOperation, rootCacheEntry));
       freeListFirstIndex = rootBucket.getValuesFreeListFirstIndex();
     } finally {
-      diskCache.release(rootCacheEntry);
+      rootCacheEntry.releaseSharedLock();
+      releasePage(atomicOperation, rootCacheEntry);
     }
 
     if (freeListFirstIndex >= 0) {
-      OCacheEntry freePageEntry = diskCache.load(fileId, freeListFirstIndex, false);
-      OSBTreeValuePage valuePage = new OSBTreeValuePage(freePageEntry, getTrackMode(), false);
+      OCacheEntry freePageEntry = loadPage(atomicOperation, fileId, freeListFirstIndex, false);
       freePageEntry.acquireExclusiveLock();
-
       try {
+        OSBTreeValuePage valuePage = new OSBTreeValuePage(freePageEntry, getChanges(atomicOperation, freePageEntry), false);
         long nextFreeListIndex = valuePage.getNextFreeListPage();
 
-        rootCacheEntry = diskCache.load(fileId, ROOT_INDEX, false);
+        rootCacheEntry = loadPage(atomicOperation, fileId, ROOT_INDEX, false);
         rootCacheEntry.acquireExclusiveLock();
-        rootBucket = new OSBTreeBucket<K, V>(rootCacheEntry, keySerializer, keyTypes, valueSerializer, getTrackMode());
+        rootBucket = new OSBTreeBucket<K, V>(rootCacheEntry, keySerializer, keyTypes, valueSerializer,
+            getChanges(atomicOperation, rootCacheEntry));
         try {
           rootBucket.setValuesFreeListFirstIndex(nextFreeListIndex);
-
-          rootCacheEntry.markDirty();
-          logPageChanges(rootBucket, fileId, ROOT_INDEX, false);
         } finally {
           rootCacheEntry.releaseExclusiveLock();
-          diskCache.release(rootCacheEntry);
+          releasePage(atomicOperation, rootCacheEntry);
         }
 
         valuePage.setNextFreeListPage(-1);
-
-        freePageEntry.markDirty();
-        logPageChanges(valuePage, fileId, freePageEntry.getPageIndex(), false);
       } finally {
         freePageEntry.releaseExclusiveLock();
-        diskCache.release(freePageEntry);
+        releasePage(atomicOperation, freePageEntry);
       }
 
       return freePageEntry.getPageIndex();
@@ -938,35 +1174,33 @@ public class OSBTree<K, V> extends ODurableComponent {
     return -1;
   }
 
-  private void rollback(OStorageTransaction transaction) {
+  private void rollback(Exception e) {
     try {
-      endAtomicOperation(true);
+      endAtomicOperation(true, e);
     } catch (IOException e1) {
       OLogManager.instance().error(this, "Error during sbtree operation  rollback", e1);
     }
   }
 
-  private void setSize(long size) throws IOException {
-    OCacheEntry rootCacheEntry = diskCache.load(fileId, ROOT_INDEX, false);
+  private void setSize(long size, OAtomicOperation atomicOperation) throws IOException {
+    OCacheEntry rootCacheEntry = loadPage(atomicOperation, fileId, ROOT_INDEX, false);
     rootCacheEntry.acquireExclusiveLock();
     try {
       OSBTreeBucket<K, V> rootBucket = new OSBTreeBucket<K, V>(rootCacheEntry, keySerializer, keyTypes, valueSerializer,
-          getTrackMode());
+          getChanges(atomicOperation, rootCacheEntry));
       rootBucket.setTreeSize(size);
-
-      logPageChanges(rootBucket, fileId, ROOT_INDEX, false);
-      rootCacheEntry.markDirty();
     } finally {
       rootCacheEntry.releaseExclusiveLock();
-      diskCache.release(rootCacheEntry);
+      releasePage(atomicOperation, rootCacheEntry);
     }
   }
 
-  private OSBTreeCursor<K, V> iterateEntriesMinorDesc(K key, boolean inclusive) throws IOException {
+  private OSBTreeCursor<K, V> iterateEntriesMinorDesc(K key, boolean inclusive, OAtomicOperation atomicOperation)
+      throws IOException {
     key = keySerializer.preprocess(key, (Object[]) keyTypes);
     key = enhanceCompositeKeyMinorDesc(key, inclusive);
 
-    BucketSearchResult bucketSearchResult = findBucket(key);
+    BucketSearchResult bucketSearchResult = findBucket(key, atomicOperation);
 
     long pageIndex = bucketSearchResult.getLastPathItem();
     int index;
@@ -979,14 +1213,15 @@ public class OSBTree<K, V> extends ODurableComponent {
     return new OSBTreeCursorBackward(pageIndex, index, null, key, false, inclusive);
   }
 
-  private OSBTreeCursor<K, V> iterateEntriesMinorAsc(K key, boolean inclusive) throws IOException {
-    key = keySerializer.preprocess(key, (Object[]) keyTypes);
-    key = enhanceCompositeKeyMinorAsc(key, inclusive);
-
-    final BucketSearchResult searchResult;
+  private OSBTreeCursor<K, V> iterateEntriesMinorAsc(K key, boolean inclusive, OAtomicOperation atomicOperation)
+      throws IOException {
     acquireSharedLock();
     try {
-      searchResult = firstItem();
+      key = keySerializer.preprocess(key, (Object[]) keyTypes);
+      key = enhanceCompositeKeyMinorAsc(key, inclusive);
+
+      final BucketSearchResult searchResult;
+      searchResult = firstItem(atomicOperation);
       if (searchResult == null)
         return new OSBTreeCursor<K, V>() {
           @Override
@@ -995,13 +1230,13 @@ public class OSBTree<K, V> extends ODurableComponent {
           }
         };
 
+      return new OSBTreeCursorForward(searchResult.getLastPathItem(), searchResult.itemIndex, null, key, false, inclusive);
     } catch (IOException e) {
-      throw new OSBTreeException("Error during finding first key in sbtree [" + name + "]");
+      throw OException.wrapException(new OSBTreeException("Error during finding first key in sbtree [" + getName() + "]", this), e);
     } finally {
       releaseSharedLock();
     }
 
-    return new OSBTreeCursorForward(searchResult.getLastPathItem(), searchResult.itemIndex, null, key, false, inclusive);
   }
 
   private K enhanceCompositeKeyMinorDesc(K key, boolean inclusive) {
@@ -1026,11 +1261,12 @@ public class OSBTree<K, V> extends ODurableComponent {
     return key;
   }
 
-  private OSBTreeCursor<K, V> iterateEntriesMajorAsc(K key, boolean inclusive) throws IOException {
+  private OSBTreeCursor<K, V> iterateEntriesMajorAsc(K key, boolean inclusive, OAtomicOperation atomicOperation)
+      throws IOException {
     key = keySerializer.preprocess(key, (Object[]) keyTypes);
     key = enhanceCompositeKeyMajorAsc(key, inclusive);
 
-    BucketSearchResult bucketSearchResult = findBucket(key);
+    BucketSearchResult bucketSearchResult = findBucket(key, atomicOperation);
 
     long pageIndex = bucketSearchResult.getLastPathItem();
     int index;
@@ -1043,14 +1279,15 @@ public class OSBTree<K, V> extends ODurableComponent {
     return new OSBTreeCursorForward(pageIndex, index, key, null, inclusive, false);
   }
 
-  private OSBTreeCursor<K, V> iterateEntriesMajorDesc(K key, boolean inclusive) throws IOException {
-    key = keySerializer.preprocess(key, (Object[]) keyTypes);
-    key = enhanceCompositeKeyMajorDesc(key, inclusive);
-
+  private OSBTreeCursor<K, V> iterateEntriesMajorDesc(K key, boolean inclusive, OAtomicOperation atomicOperation)
+      throws IOException {
     final BucketSearchResult searchResult;
     acquireSharedLock();
     try {
-      searchResult = lastItem();
+      key = keySerializer.preprocess(key, (Object[]) keyTypes);
+      key = enhanceCompositeKeyMajorDesc(key, inclusive);
+
+      searchResult = lastItem(atomicOperation);
       if (searchResult == null)
         return new OSBTreeCursor<K, V>() {
           @Override
@@ -1060,7 +1297,7 @@ public class OSBTree<K, V> extends ODurableComponent {
         };
 
     } catch (IOException e) {
-      throw new OSBTreeException("Error during finding last key in sbtree [" + name + "]");
+      throw OException.wrapException(new OSBTreeException("Error during finding last key in sbtree [" + getName() + "]", this), e);
     } finally {
       releaseSharedLock();
     }
@@ -1090,17 +1327,18 @@ public class OSBTree<K, V> extends ODurableComponent {
     return key;
   }
 
-  private BucketSearchResult firstItem() throws IOException {
+  private BucketSearchResult firstItem(OAtomicOperation atomicOperation) throws IOException {
     LinkedList<PagePathItemUnit> path = new LinkedList<PagePathItemUnit>();
 
     long bucketIndex = ROOT_INDEX;
 
-    OCacheEntry cacheEntry = diskCache.load(fileId, bucketIndex, false);
+    OCacheEntry cacheEntry = loadPage(atomicOperation, fileId, bucketIndex, false);
     int itemIndex = 0;
-
-    OSBTreeBucket<K, V> bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
-        ODurablePage.TrackMode.NONE);
+    cacheEntry.acquireSharedLock();
     try {
+      OSBTreeBucket<K, V> bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
+          getChanges(atomicOperation, cacheEntry));
+
       while (true) {
         if (!bucket.isLeaf()) {
           if (bucket.isEmpty() || itemIndex > bucket.size()) {
@@ -1143,24 +1381,31 @@ public class OSBTree<K, V> extends ODurableComponent {
           }
         }
 
-        diskCache.release(cacheEntry);
-        cacheEntry = diskCache.load(fileId, bucketIndex, false);
+        cacheEntry.releaseSharedLock();
+        releasePage(atomicOperation, cacheEntry);
 
-        bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer, ODurablePage.TrackMode.NONE);
+        cacheEntry = loadPage(atomicOperation, fileId, bucketIndex, false);
+        cacheEntry.acquireSharedLock();
+
+        bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
+            getChanges(atomicOperation, cacheEntry));
       }
     } finally {
-      diskCache.release(cacheEntry);
+      cacheEntry.releaseSharedLock();
+      releasePage(atomicOperation, cacheEntry);
     }
   }
 
-  private BucketSearchResult lastItem() throws IOException {
+  private BucketSearchResult lastItem(OAtomicOperation atomicOperation) throws IOException {
     LinkedList<PagePathItemUnit> path = new LinkedList<PagePathItemUnit>();
 
     long bucketIndex = ROOT_INDEX;
 
-    OCacheEntry cacheEntry = diskCache.load(fileId, bucketIndex, false);
+    OCacheEntry cacheEntry = loadPage(atomicOperation, fileId, bucketIndex, false);
+    cacheEntry.acquireSharedLock();
+
     OSBTreeBucket<K, V> bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
-        ODurablePage.TrackMode.NONE);
+        getChanges(atomicOperation, cacheEntry));
 
     int itemIndex = bucket.size() - 1;
     try {
@@ -1207,27 +1452,32 @@ public class OSBTree<K, V> extends ODurableComponent {
           }
         }
 
-        diskCache.release(cacheEntry);
-        cacheEntry = diskCache.load(fileId, bucketIndex, false);
+        cacheEntry.releaseSharedLock();
+        releasePage(atomicOperation, cacheEntry);
 
-        bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer, ODurablePage.TrackMode.NONE);
+        cacheEntry = loadPage(atomicOperation, fileId, bucketIndex, false);
+        cacheEntry.acquireSharedLock();
+
+        bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
+            getChanges(atomicOperation, cacheEntry));
         if (itemIndex == OSBTreeBucket.MAX_PAGE_SIZE_BYTES + 1)
           itemIndex = bucket.size() - 1;
       }
     } finally {
-      diskCache.release(cacheEntry);
+      cacheEntry.releaseSharedLock();
+      releasePage(atomicOperation, cacheEntry);
     }
   }
 
-  private OSBTreeCursor<K, V> iterateEntriesBetweenAscOrder(K keyFrom, boolean fromInclusive, K keyTo, boolean toInclusive)
-      throws IOException {
+  private OSBTreeCursor<K, V> iterateEntriesBetweenAscOrder(K keyFrom, boolean fromInclusive, K keyTo, boolean toInclusive,
+      OAtomicOperation atomicOperation) throws IOException {
     keyFrom = keySerializer.preprocess(keyFrom, (Object[]) keyTypes);
     keyTo = keySerializer.preprocess(keyTo, (Object[]) keyTypes);
 
     keyFrom = enhanceFromCompositeKeyBetweenAsc(keyFrom, fromInclusive);
     keyTo = enhanceToCompositeKeyBetweenAsc(keyTo, toInclusive);
 
-    BucketSearchResult bucketSearchResultFrom = findBucket(keyFrom);
+    BucketSearchResult bucketSearchResultFrom = findBucket(keyFrom, atomicOperation);
 
     long pageIndexFrom = bucketSearchResultFrom.getLastPathItem();
 
@@ -1241,15 +1491,15 @@ public class OSBTree<K, V> extends ODurableComponent {
     return new OSBTreeCursorForward(pageIndexFrom, indexFrom, keyFrom, keyTo, fromInclusive, toInclusive);
   }
 
-  private OSBTreeCursor<K, V> iterateEntriesBetweenDescOrder(K keyFrom, boolean fromInclusive, K keyTo, boolean toInclusive)
-      throws IOException {
+  private OSBTreeCursor<K, V> iterateEntriesBetweenDescOrder(K keyFrom, boolean fromInclusive, K keyTo, boolean toInclusive,
+      OAtomicOperation atomicOperation) throws IOException {
     keyFrom = keySerializer.preprocess(keyFrom, (Object[]) keyTypes);
     keyTo = keySerializer.preprocess(keyTo, (Object[]) keyTypes);
 
     keyFrom = enhanceFromCompositeKeyBetweenDesc(keyFrom, fromInclusive);
     keyTo = enhanceToCompositeKeyBetweenDesc(keyTo, toInclusive);
 
-    BucketSearchResult bucketSearchResultTo = findBucket(keyTo);
+    BucketSearchResult bucketSearchResultTo = findBucket(keyTo, atomicOperation);
 
     long pageIndexTo = bucketSearchResultTo.getLastPathItem();
 
@@ -1307,14 +1557,16 @@ public class OSBTree<K, V> extends ODurableComponent {
     return keyFrom;
   }
 
-  private BucketSearchResult splitBucket(List<Long> path, int keyIndex, K keyToInsert) throws IOException {
+  private BucketSearchResult splitBucket(List<Long> path, int keyIndex, K keyToInsert, OAtomicOperation atomicOperation)
+      throws IOException {
     long pageIndex = path.get(path.size() - 1);
-    OCacheEntry bucketEntry = diskCache.load(fileId, pageIndex, false);
+
+    OCacheEntry bucketEntry = loadPage(atomicOperation, fileId, pageIndex, false);
 
     bucketEntry.acquireExclusiveLock();
     try {
       OSBTreeBucket<K, V> bucketToSplit = new OSBTreeBucket<K, V>(bucketEntry, keySerializer, keyTypes, valueSerializer,
-          getTrackMode());
+          getChanges(atomicOperation, bucketEntry));
 
       final boolean splitLeaf = bucketToSplit.isLeaf();
       final int bucketSize = bucketToSplit.size();
@@ -1330,26 +1582,26 @@ public class OSBTree<K, V> extends ODurableComponent {
 
       if (pageIndex != ROOT_INDEX) {
         return splitNonRootBucket(path, keyIndex, keyToInsert, pageIndex, bucketToSplit, splitLeaf, indexToSplit, separationKey,
-            rightEntries);
+            rightEntries, atomicOperation);
       } else {
         return splitRootBucket(path, keyIndex, keyToInsert, pageIndex, bucketEntry, bucketToSplit, splitLeaf, indexToSplit,
-            separationKey, rightEntries);
+            separationKey, rightEntries, atomicOperation);
       }
     } finally {
       bucketEntry.releaseExclusiveLock();
-      diskCache.release(bucketEntry);
+      releasePage(atomicOperation, bucketEntry);
     }
   }
 
   private BucketSearchResult splitNonRootBucket(List<Long> path, int keyIndex, K keyToInsert, long pageIndex,
       OSBTreeBucket<K, V> bucketToSplit, boolean splitLeaf, int indexToSplit, K separationKey,
-      List<OSBTreeBucket.SBTreeEntry<K, V>> rightEntries) throws IOException {
-    OCacheEntry rightBucketEntry = diskCache.allocateNewPage(fileId);
+      List<OSBTreeBucket.SBTreeEntry<K, V>> rightEntries, OAtomicOperation atomicOperation) throws IOException {
+    OCacheEntry rightBucketEntry = addPage(atomicOperation, fileId);
     rightBucketEntry.acquireExclusiveLock();
 
     try {
       OSBTreeBucket<K, V> newRightBucket = new OSBTreeBucket<K, V>(rightBucketEntry, splitLeaf, keySerializer, keyTypes,
-          valueSerializer, getTrackMode());
+          valueSerializer, getChanges(atomicOperation, rightBucketEntry));
       newRightBucket.addAll(rightEntries);
 
       bucketToSplit.shrink(indexToSplit);
@@ -1363,28 +1615,25 @@ public class OSBTree<K, V> extends ODurableComponent {
         bucketToSplit.setRightSibling(rightBucketEntry.getPageIndex());
 
         if (rightSiblingPageIndex >= 0) {
-          final OCacheEntry rightSiblingBucketEntry = diskCache.load(fileId, rightSiblingPageIndex, false);
+          final OCacheEntry rightSiblingBucketEntry = loadPage(atomicOperation, fileId, rightSiblingPageIndex, false);
           rightSiblingBucketEntry.acquireExclusiveLock();
           OSBTreeBucket<K, V> rightSiblingBucket = new OSBTreeBucket<K, V>(rightSiblingBucketEntry, keySerializer, keyTypes,
-              valueSerializer, getTrackMode());
+              valueSerializer, getChanges(atomicOperation, rightSiblingBucketEntry));
           try {
             rightSiblingBucket.setLeftSibling(rightBucketEntry.getPageIndex());
-            logPageChanges(rightSiblingBucket, fileId, rightSiblingPageIndex, false);
-
-            rightSiblingBucketEntry.markDirty();
           } finally {
             rightSiblingBucketEntry.releaseExclusiveLock();
-            diskCache.release(rightSiblingBucketEntry);
+            releasePage(atomicOperation, rightSiblingBucketEntry);
           }
         }
       }
 
       long parentIndex = path.get(path.size() - 2);
-      OCacheEntry parentCacheEntry = diskCache.load(fileId, parentIndex, false);
+      OCacheEntry parentCacheEntry = loadPage(atomicOperation, fileId, parentIndex, false);
       parentCacheEntry.acquireExclusiveLock();
       try {
         OSBTreeBucket<K, V> parentBucket = new OSBTreeBucket<K, V>(parentCacheEntry, keySerializer, keyTypes, valueSerializer,
-            getTrackMode());
+            getChanges(atomicOperation, parentCacheEntry));
         OSBTreeBucket.SBTreeEntry<K, V> parentEntry = new OSBTreeBucket.SBTreeEntry<K, V>(pageIndex,
             rightBucketEntry.getPageIndex(), separationKey, null);
 
@@ -1394,33 +1643,31 @@ public class OSBTree<K, V> extends ODurableComponent {
         insertionIndex = -insertionIndex - 1;
         while (!parentBucket.addEntry(insertionIndex, parentEntry, true)) {
           parentCacheEntry.releaseExclusiveLock();
-          diskCache.release(parentCacheEntry);
+          releasePage(atomicOperation, parentCacheEntry);
 
-          BucketSearchResult bucketSearchResult = splitBucket(path.subList(0, path.size() - 1), insertionIndex, separationKey);
+          BucketSearchResult bucketSearchResult = splitBucket(path.subList(0, path.size() - 1), insertionIndex, separationKey,
+              atomicOperation);
 
           parentIndex = bucketSearchResult.getLastPathItem();
-          parentCacheEntry = diskCache.load(fileId, parentIndex, false);
+          parentCacheEntry = loadPage(atomicOperation, fileId, parentIndex, false);
           parentCacheEntry.acquireExclusiveLock();
 
           insertionIndex = bucketSearchResult.itemIndex;
 
-          parentBucket = new OSBTreeBucket<K, V>(parentCacheEntry, keySerializer, keyTypes, valueSerializer, getTrackMode());
+          parentBucket = new OSBTreeBucket<K, V>(parentCacheEntry, keySerializer, keyTypes, valueSerializer,
+              getChanges(atomicOperation, parentCacheEntry));
         }
 
-        logPageChanges(parentBucket, fileId, parentIndex, false);
       } finally {
         parentCacheEntry.releaseExclusiveLock();
-        diskCache.release(parentCacheEntry);
+        releasePage(atomicOperation, parentCacheEntry);
       }
 
-      logPageChanges(newRightBucket, fileId, rightBucketEntry.getPageIndex(), true);
     } finally {
-      rightBucketEntry.markDirty();
       rightBucketEntry.releaseExclusiveLock();
-      diskCache.release(rightBucketEntry);
+      releasePage(atomicOperation, rightBucketEntry);
     }
 
-    logPageChanges(bucketToSplit, fileId, pageIndex, false);
     ArrayList<Long> resultPath = new ArrayList<Long>(path.subList(0, path.size() - 1));
 
     if (comparator.compare(keyToInsert, separationKey) < 0) {
@@ -1439,7 +1686,7 @@ public class OSBTree<K, V> extends ODurableComponent {
 
   private BucketSearchResult splitRootBucket(List<Long> path, int keyIndex, K keyToInsert, long pageIndex, OCacheEntry bucketEntry,
       OSBTreeBucket<K, V> bucketToSplit, boolean splitLeaf, int indexToSplit, K separationKey,
-      List<OSBTreeBucket.SBTreeEntry<K, V>> rightEntries) throws IOException {
+      List<OSBTreeBucket.SBTreeEntry<K, V>> rightEntries, OAtomicOperation atomicOperation) throws IOException {
     final long freeListPage = bucketToSplit.getValuesFreeListFirstIndex();
     final long treeSize = bucketToSplit.getTreeSize();
 
@@ -1448,49 +1695,46 @@ public class OSBTree<K, V> extends ODurableComponent {
     for (int i = 0; i < indexToSplit; i++)
       leftEntries.add(bucketToSplit.getEntry(i));
 
-    OCacheEntry leftBucketEntry = diskCache.allocateNewPage(fileId);
+    OCacheEntry leftBucketEntry = addPage(atomicOperation, fileId);
 
-    OCacheEntry rightBucketEntry = diskCache.allocateNewPage(fileId);
+    OCacheEntry rightBucketEntry = addPage(atomicOperation, fileId);
     leftBucketEntry.acquireExclusiveLock();
     try {
       OSBTreeBucket<K, V> newLeftBucket = new OSBTreeBucket<K, V>(leftBucketEntry, splitLeaf, keySerializer, keyTypes,
-          valueSerializer, getTrackMode());
+          valueSerializer, getChanges(atomicOperation, leftBucketEntry));
       newLeftBucket.addAll(leftEntries);
 
       if (splitLeaf)
         newLeftBucket.setRightSibling(rightBucketEntry.getPageIndex());
 
-      logPageChanges(newLeftBucket, fileId, leftBucketEntry.getPageIndex(), true);
     } finally {
       leftBucketEntry.releaseExclusiveLock();
-      diskCache.release(leftBucketEntry);
+      releasePage(atomicOperation, leftBucketEntry);
     }
 
     rightBucketEntry.acquireExclusiveLock();
     try {
       OSBTreeBucket<K, V> newRightBucket = new OSBTreeBucket<K, V>(rightBucketEntry, splitLeaf, keySerializer, keyTypes,
-          valueSerializer, getTrackMode());
+          valueSerializer, getChanges(atomicOperation, rightBucketEntry));
       newRightBucket.addAll(rightEntries);
 
       if (splitLeaf)
         newRightBucket.setLeftSibling(leftBucketEntry.getPageIndex());
-
-      logPageChanges(newRightBucket, fileId, rightBucketEntry.getPageIndex(), true);
-      rightBucketEntry.markDirty();
     } finally {
       rightBucketEntry.releaseExclusiveLock();
-      diskCache.release(rightBucketEntry);
+      releasePage(atomicOperation, rightBucketEntry);
     }
 
-    bucketToSplit = new OSBTreeBucket<K, V>(bucketEntry, false, keySerializer, keyTypes, valueSerializer, getTrackMode());
+    bucketToSplit = new OSBTreeBucket<K, V>(bucketEntry, false, keySerializer, keyTypes, valueSerializer,
+        getChanges(atomicOperation, bucketEntry));
 
     bucketToSplit.setTreeSize(treeSize);
     bucketToSplit.setValuesFreeListFirstIndex(freeListPage);
 
-    bucketToSplit.addEntry(0, new OSBTreeBucket.SBTreeEntry<K, V>(leftBucketEntry.getPageIndex(), rightBucketEntry.getPageIndex(),
-        separationKey, null), true);
+    bucketToSplit.addEntry(0,
+        new OSBTreeBucket.SBTreeEntry<K, V>(leftBucketEntry.getPageIndex(), rightBucketEntry.getPageIndex(), separationKey, null),
+        true);
 
-    logPageChanges(bucketToSplit, fileId, pageIndex, false);
     ArrayList<Long> resultPath = new ArrayList<Long>(path.subList(0, path.size() - 1));
 
     if (comparator.compare(keyToInsert, separationKey) < 0) {
@@ -1506,17 +1750,23 @@ public class OSBTree<K, V> extends ODurableComponent {
     return new BucketSearchResult(keyIndex - indexToSplit - 1, resultPath);
   }
 
-  private BucketSearchResult findBucket(K key) throws IOException {
+  private BucketSearchResult findBucket(K key, OAtomicOperation atomicOperation) throws IOException {
     long pageIndex = ROOT_INDEX;
     final ArrayList<Long> path = new ArrayList<Long>();
 
     while (true) {
+      if (path.size() > MAX_PATH_LENGTH)
+        throw new OSBTreeException(
+            "We reached max level of depth of SBTree but still found nothing, seems like tree is in corrupted state. You should rebuild index related to given query.",
+            this);
+
       path.add(pageIndex);
-      final OCacheEntry bucketEntry = diskCache.load(fileId, pageIndex, false);
+      final OCacheEntry bucketEntry = loadPage(atomicOperation, fileId, pageIndex, false);
+      bucketEntry.acquireSharedLock();
       final OSBTreeBucket.SBTreeEntry<K, V> entry;
       try {
         final OSBTreeBucket<K, V> keyBucket = new OSBTreeBucket<K, V>(bucketEntry, keySerializer, keyTypes, valueSerializer,
-            ODurablePage.TrackMode.NONE);
+            getChanges(atomicOperation, bucketEntry));
         final int index = keyBucket.find(key);
 
         if (keyBucket.isLeaf())
@@ -1533,7 +1783,8 @@ public class OSBTree<K, V> extends ODurableComponent {
         }
 
       } finally {
-        diskCache.release(bucketEntry);
+        bucketEntry.releaseSharedLock();
+        releasePage(atomicOperation, bucketEntry);
       }
 
       if (comparator.compare(key, entry.key) >= 0)
@@ -1568,12 +1819,14 @@ public class OSBTree<K, V> extends ODurableComponent {
     return key;
   }
 
-  private V readValue(OSBTreeValue<V> sbTreeValue) throws IOException {
+  private V readValue(OSBTreeValue<V> sbTreeValue, OAtomicOperation atomicOperation) throws IOException {
     if (!sbTreeValue.isLink())
       return sbTreeValue.getValue();
 
-    OCacheEntry cacheEntry = diskCache.load(fileId, sbTreeValue.getLink(), false);
-    OSBTreeValuePage valuePage = new OSBTreeValuePage(cacheEntry, ODurablePage.TrackMode.NONE, false);
+    OCacheEntry cacheEntry = loadPage(atomicOperation, fileId, sbTreeValue.getLink(), false);
+    cacheEntry.acquireSharedLock();
+
+    OSBTreeValuePage valuePage = new OSBTreeValuePage(cacheEntry, getChanges(atomicOperation, cacheEntry), false);
 
     int totalSize = valuePage.getSize();
     int currentSize = 0;
@@ -1584,21 +1837,26 @@ public class OSBTree<K, V> extends ODurableComponent {
 
       long nextPage = valuePage.getNextPage();
       if (nextPage >= 0) {
-        diskCache.release(cacheEntry);
-        cacheEntry = diskCache.load(fileId, nextPage, false);
+        cacheEntry.releaseSharedLock();
+        releasePage(atomicOperation, cacheEntry);
 
-        valuePage = new OSBTreeValuePage(cacheEntry, ODurablePage.TrackMode.NONE, false);
+        cacheEntry = loadPage(atomicOperation, fileId, nextPage, false);
+        cacheEntry.acquireSharedLock();
+
+        valuePage = new OSBTreeValuePage(cacheEntry, getChanges(atomicOperation, cacheEntry), false);
       }
     }
 
-    diskCache.release(cacheEntry);
+    cacheEntry.releaseSharedLock();
+    releasePage(atomicOperation, cacheEntry);
 
     return valueSerializer.deserializeNativeObject(value, 0);
   }
 
-  private Map.Entry<K, V> convertToMapEntry(OSBTreeBucket.SBTreeEntry<K, V> treeEntry) throws IOException {
+  private Map.Entry<K, V> convertToMapEntry(OSBTreeBucket.SBTreeEntry<K, V> treeEntry, OAtomicOperation atomicOperation)
+      throws IOException {
     final K key = treeEntry.key;
-    final V value = readValue(treeEntry.value);
+    final V value = readValue(treeEntry.value, atomicOperation);
 
     return new Map.Entry<K, V>() {
       @Override
@@ -1619,15 +1877,14 @@ public class OSBTree<K, V> extends ODurableComponent {
   }
 
   /**
-   * Indicates search behavior in case of {@link OCompositeKey} keys that have less amount of internal keys are used, whether lowest
-   * or highest partially matched key should be used.
+   * Indicates search behavior in case of {@link OCompositeKey} keys that have less amount of internal keys are used, whether
+   * lowest or highest partially matched key should be used.
    */
   private static enum PartialSearchMode {
     /**
      * Any partially matched key will be used as search result.
      */
-    NONE,
-    /**
+    NONE, /**
      * The biggest partially matched key will be used as search result.
      */
     HIGHEST_BOUNDARY,
@@ -1671,8 +1928,8 @@ public class OSBTree<K, V> extends ODurableComponent {
   }
 
   public class OSBTreeFullKeyCursor implements OSBTreeKeyCursor<K> {
-    private long        pageIndex;
-    private int         itemIndex;
+    private long pageIndex;
+    private int  itemIndex;
 
     private List<K>     keysCache    = new ArrayList<K>();
     private Iterator<K> keysIterator = new OEmptyIterator<K>();
@@ -1684,74 +1941,93 @@ public class OSBTree<K, V> extends ODurableComponent {
 
     @Override
     public K next(int prefetchSize) {
-      if (keysIterator == null)
-        return null;
-
-      if (keysIterator.hasNext())
-        return keysIterator.next();
-
-      keysCache.clear();
-
-      if (prefetchSize < 0 || prefetchSize > OGlobalConfiguration.INDEX_CURSOR_PREFETCH_SIZE.getValueAsInteger())
-        prefetchSize = OGlobalConfiguration.INDEX_CURSOR_PREFETCH_SIZE.getValueAsInteger();
-
-      if (prefetchSize == 0)
-        prefetchSize = 1;
-
-      acquireSharedLock();
+      final OSessionStoragePerformanceStatistic statistic = performanceStatisticManager.getSessionPerformanceStatistic();
+      startOperation();
+      if (statistic != null)
+        statistic.startIndexEntryReadTimer();
       try {
-        while (keysCache.size() < prefetchSize) {
-          if (pageIndex == -1)
-            break;
+        if (keysIterator == null)
+          return null;
 
-          if (pageIndex >= diskCache.getFilledUpTo(fileId)) {
-            pageIndex = -1;
-            break;
-          }
+        if (keysIterator.hasNext())
+          return keysIterator.next();
 
-          final OCacheEntry cacheEntry = diskCache.load(fileId, pageIndex, false);
+        keysCache.clear();
+
+        if (prefetchSize < 0 || prefetchSize > OGlobalConfiguration.INDEX_CURSOR_PREFETCH_SIZE.getValueAsInteger())
+          prefetchSize = OGlobalConfiguration.INDEX_CURSOR_PREFETCH_SIZE.getValueAsInteger();
+
+        if (prefetchSize == 0)
+          prefetchSize = 1;
+
+        atomicOperationsManager.acquireReadLock(OSBTree.this);
+        try {
+          acquireSharedLock();
           try {
-            final OSBTreeBucket<K, V> bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
-                ODurablePage.TrackMode.NONE);
+            OAtomicOperation atomicOperation = atomicOperationsManager.getCurrentOperation();
 
-            if (itemIndex >= bucket.size()) {
-              pageIndex = bucket.getRightSibling();
-              itemIndex = 0;
-              continue;
+            while (keysCache.size() < prefetchSize) {
+              if (pageIndex == -1)
+                break;
+
+              if (pageIndex >= getFilledUpTo(atomicOperation, fileId)) {
+                pageIndex = -1;
+                break;
+              }
+
+              final OCacheEntry cacheEntry = loadPage(atomicOperation, fileId, pageIndex, false);
+              cacheEntry.acquireSharedLock();
+              try {
+                final OSBTreeBucket<K, V> bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
+                    getChanges(atomicOperation, cacheEntry));
+
+                if (itemIndex >= bucket.size()) {
+                  pageIndex = bucket.getRightSibling();
+                  itemIndex = 0;
+                  continue;
+                }
+
+                final Map.Entry<K, V> entry = convertToMapEntry(bucket.getEntry(itemIndex), atomicOperation);
+                itemIndex++;
+
+                keysCache.add(entry.getKey());
+              } finally {
+                cacheEntry.releaseSharedLock();
+                releasePage(atomicOperation, cacheEntry);
+              }
             }
-
-            final Map.Entry<K, V> entry = convertToMapEntry(bucket.getEntry(itemIndex));
-            itemIndex++;
-
-            keysCache.add(entry.getKey());
           } finally {
-            diskCache.release(cacheEntry);
+            releaseSharedLock();
           }
+        } catch (IOException e) {
+          throw OException.wrapException(new OSBTreeException("Error during element iteration", OSBTree.this), e);
+        } finally {
+          atomicOperationsManager.releaseReadLock(OSBTree.this);
         }
-      } catch (IOException e) {
-        throw new OSBTreeException("Error during element iteration", e);
+
+        if (keysCache.isEmpty()) {
+          keysCache = null;
+          return null;
+        }
+
+        keysIterator = keysCache.iterator();
+        return keysIterator.next();
       } finally {
-        releaseSharedLock();
+        if (statistic != null)
+          statistic.stopIndexEntryReadTimer();
+        completeOperation();
       }
-
-      if (keysCache.isEmpty()) {
-        keysCache = null;
-        return null;
-      }
-
-      keysIterator = keysCache.iterator();
-      return keysIterator.next();
     }
   }
 
   private final class OSBTreeCursorForward implements OSBTreeCursor<K, V> {
-    private final K                   fromKey;
-    private final K                   toKey;
-    private final boolean             fromKeyInclusive;
-    private final boolean             toKeyInclusive;
+    private final K       fromKey;
+    private final K       toKey;
+    private final boolean fromKeyInclusive;
+    private final boolean toKeyInclusive;
 
-    private long                      pageIndex;
-    private int                       itemIndex;
+    private long pageIndex;
+    private int  itemIndex;
 
     private List<Map.Entry<K, V>>     dataCache         = new ArrayList<Map.Entry<K, V>>();
     private Iterator<Map.Entry<K, V>> dataCacheIterator = OEmptyMapEntryIterator.INSTANCE;
@@ -1768,86 +2044,106 @@ public class OSBTree<K, V> extends ODurableComponent {
     }
 
     public Map.Entry<K, V> next(int prefetchSize) {
-      if (dataCacheIterator == null)
-        return null;
-
-      if (dataCacheIterator.hasNext())
-        return dataCacheIterator.next();
-
-      dataCache.clear();
-
-      if (prefetchSize < 0 || prefetchSize > OGlobalConfiguration.INDEX_CURSOR_PREFETCH_SIZE.getValueAsInteger())
-        prefetchSize = OGlobalConfiguration.INDEX_CURSOR_PREFETCH_SIZE.getValueAsInteger();
-
-      if (prefetchSize == 0)
-        prefetchSize = 1;
-
-      acquireSharedLock();
+      final OSessionStoragePerformanceStatistic statistic = performanceStatisticManager.getSessionPerformanceStatistic();
+      startOperation();
+      if (statistic != null)
+        statistic.startIndexEntryReadTimer();
       try {
-        while (dataCache.size() < prefetchSize) {
-          if (pageIndex == -1)
-            break;
+        if (dataCacheIterator == null)
+          return null;
 
-          if (pageIndex >= diskCache.getFilledUpTo(fileId)) {
-            pageIndex = -1;
-            break;
-          }
+        if (dataCacheIterator.hasNext())
+          return dataCacheIterator.next();
 
-          final OCacheEntry cacheEntry = diskCache.load(fileId, pageIndex, false);
+        dataCache.clear();
+
+        if (prefetchSize < 0 || prefetchSize > OGlobalConfiguration.INDEX_CURSOR_PREFETCH_SIZE.getValueAsInteger())
+          prefetchSize = OGlobalConfiguration.INDEX_CURSOR_PREFETCH_SIZE.getValueAsInteger();
+
+        if (prefetchSize == 0)
+          prefetchSize = 1;
+
+        atomicOperationsManager.acquireReadLock(OSBTree.this);
+        try {
+          acquireSharedLock();
           try {
-            final OSBTreeBucket<K, V> bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
-                ODurablePage.TrackMode.NONE);
+            OAtomicOperation atomicOperation = atomicOperationsManager.getCurrentOperation();
 
-            if (itemIndex >= bucket.size()) {
-              pageIndex = bucket.getRightSibling();
-              itemIndex = 0;
-              continue;
+            while (dataCache.size() < prefetchSize) {
+              if (pageIndex == -1)
+                break;
+
+              if (pageIndex >= getFilledUpTo(atomicOperation, fileId)) {
+                pageIndex = -1;
+                break;
+              }
+
+              final OCacheEntry cacheEntry = loadPage(atomicOperation, fileId, pageIndex, false);
+              cacheEntry.acquireSharedLock();
+              try {
+                final OSBTreeBucket<K, V> bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
+                    getChanges(atomicOperation, cacheEntry));
+
+                if (itemIndex >= bucket.size()) {
+                  pageIndex = bucket.getRightSibling();
+                  itemIndex = 0;
+                  continue;
+                }
+
+                final Map.Entry<K, V> entry = convertToMapEntry(bucket.getEntry(itemIndex), atomicOperation);
+                itemIndex++;
+
+                if (fromKey != null && (fromKeyInclusive ?
+                    comparator.compare(entry.getKey(), fromKey) < 0 :
+                    comparator.compare(entry.getKey(), fromKey) <= 0))
+                  continue;
+
+                if (toKey != null && (toKeyInclusive ?
+                    comparator.compare(entry.getKey(), toKey) > 0 :
+                    comparator.compare(entry.getKey(), toKey) >= 0)) {
+                  pageIndex = -1;
+                  break;
+                }
+
+                dataCache.add(entry);
+              } finally {
+                cacheEntry.releaseSharedLock();
+                releasePage(atomicOperation, cacheEntry);
+              }
             }
-
-            final Map.Entry<K, V> entry = convertToMapEntry(bucket.getEntry(itemIndex));
-            itemIndex++;
-
-            if (fromKey != null
-                && (fromKeyInclusive ? comparator.compare(entry.getKey(), fromKey) < 0 : comparator
-                    .compare(entry.getKey(), fromKey) <= 0))
-              continue;
-
-            if (toKey != null
-                && (toKeyInclusive ? comparator.compare(entry.getKey(), toKey) > 0 : comparator.compare(entry.getKey(), toKey) >= 0)) {
-              pageIndex = -1;
-              break;
-            }
-
-            dataCache.add(entry);
           } finally {
-            diskCache.release(cacheEntry);
+            releaseSharedLock();
           }
+        } catch (IOException e) {
+          throw OException.wrapException(new OSBTreeException("Error during element iteration", OSBTree.this), e);
+        } finally {
+          atomicOperationsManager.releaseReadLock(OSBTree.this);
         }
-      } catch (IOException e) {
-        throw new OSBTreeException("Error during element iteration", e);
+
+        if (dataCache.isEmpty()) {
+          dataCacheIterator = null;
+          return null;
+        }
+
+        dataCacheIterator = dataCache.iterator();
+
+        return dataCacheIterator.next();
       } finally {
-        releaseSharedLock();
+        if (statistic != null)
+          statistic.stopIndexEntryReadTimer();
+        completeOperation();
       }
-
-      if (dataCache.isEmpty()) {
-        dataCacheIterator = null;
-        return null;
-      }
-
-      dataCacheIterator = dataCache.iterator();
-
-      return dataCacheIterator.next();
     }
   }
 
   private final class OSBTreeCursorBackward implements OSBTreeCursor<K, V> {
-    private final K                   fromKey;
-    private final K                   toKey;
-    private final boolean             fromKeyInclusive;
-    private final boolean             toKeyInclusive;
+    private final K       fromKey;
+    private final K       toKey;
+    private final boolean fromKeyInclusive;
+    private final boolean toKeyInclusive;
 
-    private long                      pageIndex;
-    private int                       itemIndex;
+    private long pageIndex;
+    private int  itemIndex;
 
     private List<Map.Entry<K, V>>     dataCache         = new ArrayList<Map.Entry<K, V>>();
     private Iterator<Map.Entry<K, V>> dataCacheIterator = OEmptyMapEntryIterator.INSTANCE;
@@ -1864,73 +2160,103 @@ public class OSBTree<K, V> extends ODurableComponent {
     }
 
     public Map.Entry<K, V> next(int prefetchSize) {
-      if (dataCacheIterator == null)
-        return null;
-
-      if (dataCacheIterator.hasNext())
-        return dataCacheIterator.next();
-
-      dataCache.clear();
-
-      if (prefetchSize < 0 || prefetchSize > OGlobalConfiguration.INDEX_CURSOR_PREFETCH_SIZE.getValueAsInteger())
-        prefetchSize = OGlobalConfiguration.INDEX_CURSOR_PREFETCH_SIZE.getValueAsInteger();
-
-      acquireSharedLock();
+      final OSessionStoragePerformanceStatistic statistic = performanceStatisticManager.getSessionPerformanceStatistic();
+      startOperation();
+      if (statistic != null)
+        statistic.startIndexEntryReadTimer();
       try {
-        while (dataCache.size() < prefetchSize) {
-          if (pageIndex >= diskCache.getFilledUpTo(fileId))
-            pageIndex = diskCache.getFilledUpTo(fileId) - 1;
+        if (dataCacheIterator == null)
+          return null;
 
-          if (pageIndex == -1)
-            break;
+        if (dataCacheIterator.hasNext())
+          return dataCacheIterator.next();
 
-          final OCacheEntry cacheEntry = diskCache.load(fileId, pageIndex, false);
+        dataCache.clear();
+
+        if (prefetchSize < 0 || prefetchSize > OGlobalConfiguration.INDEX_CURSOR_PREFETCH_SIZE.getValueAsInteger())
+          prefetchSize = OGlobalConfiguration.INDEX_CURSOR_PREFETCH_SIZE.getValueAsInteger();
+
+        atomicOperationsManager.acquireReadLock(OSBTree.this);
+        try {
+          acquireSharedLock();
           try {
-            final OSBTreeBucket<K, V> bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
-                ODurablePage.TrackMode.NONE);
+            OAtomicOperation atomicOperation = atomicOperationsManager.getCurrentOperation();
 
-            if (itemIndex >= bucket.size())
-              itemIndex = bucket.size() - 1;
+            while (dataCache.size() < prefetchSize) {
+              if (pageIndex >= getFilledUpTo(atomicOperation, fileId))
+                pageIndex = getFilledUpTo(atomicOperation, fileId) - 1;
 
-            if (itemIndex < 0) {
-              pageIndex = bucket.getLeftSibling();
-              itemIndex = Integer.MAX_VALUE;
-              continue;
+              if (pageIndex == -1)
+                break;
+
+              final OCacheEntry cacheEntry = loadPage(atomicOperation, fileId, pageIndex, false);
+              cacheEntry.acquireSharedLock();
+              try {
+                final OSBTreeBucket<K, V> bucket = new OSBTreeBucket<K, V>(cacheEntry, keySerializer, keyTypes, valueSerializer,
+                    getChanges(atomicOperation, cacheEntry));
+
+                if (itemIndex >= bucket.size())
+                  itemIndex = bucket.size() - 1;
+
+                if (itemIndex < 0) {
+                  pageIndex = bucket.getLeftSibling();
+                  itemIndex = Integer.MAX_VALUE;
+                  continue;
+                }
+
+                final Map.Entry<K, V> entry = convertToMapEntry(bucket.getEntry(itemIndex), atomicOperation);
+                itemIndex--;
+
+                if (toKey != null && (toKeyInclusive ?
+                    comparator.compare(entry.getKey(), toKey) > 0 :
+                    comparator.compare(entry.getKey(), toKey) >= 0))
+                  continue;
+
+                if (fromKey != null && (fromKeyInclusive ?
+                    comparator.compare(entry.getKey(), fromKey) < 0 :
+                    comparator.compare(entry.getKey(), fromKey) <= 0)) {
+                  pageIndex = -1;
+                  break;
+                }
+
+                dataCache.add(entry);
+              } finally {
+                cacheEntry.releaseSharedLock();
+                releasePage(atomicOperation, cacheEntry);
+              }
             }
-
-            final Map.Entry<K, V> entry = convertToMapEntry(bucket.getEntry(itemIndex));
-            itemIndex--;
-
-            if (toKey != null
-                && (toKeyInclusive ? comparator.compare(entry.getKey(), toKey) > 0 : comparator.compare(entry.getKey(), toKey) >= 0))
-              continue;
-
-            if (fromKey != null
-                && (fromKeyInclusive ? comparator.compare(entry.getKey(), fromKey) < 0 : comparator
-                    .compare(entry.getKey(), fromKey) <= 0)) {
-              pageIndex = -1;
-              break;
-            }
-
-            dataCache.add(entry);
           } finally {
-            diskCache.release(cacheEntry);
+            releaseSharedLock();
           }
+        } catch (IOException e) {
+          throw OException.wrapException(new OSBTreeException("Error during element iteration", OSBTree.this), e);
+        } finally {
+          atomicOperationsManager.releaseReadLock(OSBTree.this);
         }
-      } catch (IOException e) {
-        throw new OSBTreeException("Error during element iteration", e);
+
+        if (dataCache.isEmpty()) {
+          dataCacheIterator = null;
+          return null;
+        }
+
+        dataCacheIterator = dataCache.iterator();
+
+        return dataCacheIterator.next();
       } finally {
-        releaseSharedLock();
+        if (statistic != null)
+          statistic.stopIndexEntryReadTimer();
+        completeOperation();
       }
+    }
+  }
 
-      if (dataCache.isEmpty()) {
-        dataCacheIterator = null;
-        return null;
-      }
-
-      dataCacheIterator = dataCache.iterator();
-
-      return dataCacheIterator.next();
+  @Override
+  protected void startOperation() {
+    OSessionStoragePerformanceStatistic sessionStoragePerformanceStatistic = performanceStatisticManager
+        .getSessionPerformanceStatistic();
+    if (sessionStoragePerformanceStatistic != null) {
+      sessionStoragePerformanceStatistic
+          .startComponentOperation(getFullName(), OSessionStoragePerformanceStatistic.ComponentType.INDEX);
     }
   }
 }

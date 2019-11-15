@@ -15,15 +15,11 @@
  */
 package com.orientechnologies.orient.object.serialization;
 
-import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Iterator;
-import java.util.List;
-import java.util.ListIterator;
-
 import com.orientechnologies.orient.core.record.ORecord;
 import com.orientechnologies.orient.object.enhancement.OObjectEntitySerializer;
+
+import java.io.Serializable;
+import java.util.*;
 
 @SuppressWarnings({ "unchecked" })
 public class OObjectCustomSerializerList<TYPE> implements List<TYPE>, OObjectLazyCustomSerializer<List<TYPE>>, Serializable {
@@ -209,7 +205,7 @@ public class OObjectCustomSerializerList<TYPE> implements List<TYPE>, OObjectLaz
     convertAll();
   }
 
-  public void detachAll(boolean nonProxiedInstance) {
+  public void detachAll(boolean nonProxiedInstance, Map<Object, Object> alreadyDetached, Map<Object, Object> lazyObjects) {
     convertAll();
   }
 
@@ -232,7 +228,7 @@ public class OObjectCustomSerializerList<TYPE> implements List<TYPE>, OObjectLaz
   public List<TYPE> getNonOrientInstance() {
     List<TYPE> list = new ArrayList<TYPE>();
     list.addAll(this);
-    return this;
+    return list;
   }
 
   /**

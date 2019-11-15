@@ -1,30 +1,30 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.exception;
 
 import com.orientechnologies.common.concur.ONeedRetryException;
+import com.orientechnologies.common.exception.OHighLevelException;
 import com.orientechnologies.orient.core.db.record.ORecordOperation;
 import com.orientechnologies.orient.core.id.ORID;
-import com.orientechnologies.orient.core.id.ORecordId;
-import com.orientechnologies.orient.core.version.ORecordVersion;
-import com.orientechnologies.orient.core.version.OVersionFactory;
+
+import java.util.Locale;
 
 /**
  * Exception thrown when MVCC is enabled and a record cannot be updated or deleted because versions don't match.
@@ -32,63 +32,61 @@ import com.orientechnologies.orient.core.version.OVersionFactory;
  * @author Luca Garulli (l.garulli--at--orientechnologies.com)
  * 
  */
-public class OConcurrentModificationException extends ONeedRetryException {
-
-  private static final String MESSAGE_OPERATION      = "are";
-  private static final String MESSAGE_RECORD_VERSION = "your=v";
-  private static final String MESSAGE_DB_VERSION     = "db=v";
+public class OConcurrentModificationException extends ONeedRetryException implements OHighLevelException {
 
   private static final long   serialVersionUID       = 1L;
 
   private ORID                rid;
-  private ORecordVersion      databaseVersion        = OVersionFactory.instance().createVersion();
-  private ORecordVersion      recordVersion          = OVersionFactory.instance().createVersion();
+  private int                 databaseVersion        = 0;
+  private int                 recordVersion          = 0;
   private int                 recordOperation;
 
-  /**
-   * Default constructor for OFastConcurrentModificationException
-   */
-  protected OConcurrentModificationException() {
-    rid = new ORecordId();
+  public OConcurrentModificationException(OConcurrentModificationException exception) {
+    super(exception);
+
+    this.rid = exception.rid;
+    this.recordVersion = exception.recordVersion;
+    this.databaseVersion = exception.databaseVersion;
+    this.recordOperation = exception.recordOperation;
   }
 
-  public OConcurrentModificationException(final String message) {
-    int beginPos = message.indexOf(ORID.PREFIX);
-    int endPos = message.indexOf(' ', beginPos);
-    rid = new ORecordId(message.substring(beginPos, endPos));
-
-    // EXTRACT THE OPERATION
-    beginPos = message.indexOf(MESSAGE_OPERATION, endPos) + MESSAGE_OPERATION.length() + 1;
-    endPos = message.indexOf("ing", beginPos);
-    recordOperation = ORecordOperation.getId(message.substring(beginPos, endPos).toUpperCase() + "E");
-
-    // EXTRACT THE DB VERSION
-    beginPos = message.indexOf(MESSAGE_DB_VERSION, endPos) + MESSAGE_DB_VERSION.length();
-    endPos = message.indexOf(' ', beginPos);
-    databaseVersion.getSerializer().fromString(message.substring(beginPos, endPos), databaseVersion);
-
-    // EXTRACT MY VERSION
-    beginPos = message.indexOf(MESSAGE_RECORD_VERSION, endPos) + MESSAGE_RECORD_VERSION.length();
-    endPos = message.indexOf(')', beginPos);
-    recordVersion.getSerializer().fromString(message.substring(beginPos, endPos), recordVersion);
+  protected OConcurrentModificationException(final String message) {
+    super(message);
   }
 
-  public OConcurrentModificationException(final ORID iRID, final ORecordVersion iDatabaseVersion,
-      final ORecordVersion iRecordVersion, final int iRecordOperation) {
+  public OConcurrentModificationException(final ORID iRID, final int iDatabaseVersion, final int iRecordVersion,
+      final int iRecordOperation) {
+    super(makeMessage(iRecordOperation, iRID, iDatabaseVersion, iRecordVersion));
+
     if (OFastConcurrentModificationException.enabled())
       throw new IllegalStateException("Fast-throw is enabled. Use OFastConcurrentModificationException.instance() instead");
 
     rid = iRID;
-    databaseVersion.copyFrom(iDatabaseVersion);
-    recordVersion.copyFrom(iRecordVersion);
+    databaseVersion = iDatabaseVersion;
+    recordVersion = iRecordVersion;
     recordOperation = iRecordOperation;
   }
 
-  public ORecordVersion getEnhancedDatabaseVersion() {
+  @Override
+  public boolean equals(final Object obj) {
+    if (!(obj instanceof OConcurrentModificationException))
+      return false;
+
+    final OConcurrentModificationException other = (OConcurrentModificationException) obj;
+
+    if (recordOperation == other.recordOperation && rid.equals(other.rid)) {
+      if (databaseVersion == other.databaseVersion)
+        return recordOperation == other.recordOperation;
+    }
+
+    return false;
+  }
+
+  public int getEnhancedDatabaseVersion() {
     return databaseVersion;
   }
 
-  public ORecordVersion getEnhancedRecordVersion() {
+  public int getEnhancedRecordVersion() {
     return recordVersion;
   }
 
@@ -96,7 +94,7 @@ public class OConcurrentModificationException extends ONeedRetryException {
     return rid;
   }
 
-  public String getMessage() {
+  private static String makeMessage(int recordOperation, ORID rid, int databaseVersion, int recordVersion) {
     final String operation = ORecordOperation.getName(recordOperation);
 
     final StringBuilder sb = new StringBuilder();
@@ -105,7 +103,7 @@ public class OConcurrentModificationException extends ONeedRetryException {
     sb.append(" the record ");
     sb.append(rid);
     sb.append(" because the version is not the latest. Probably you are ");
-    sb.append(operation.toLowerCase().substring(0, operation.length() - 1));
+    sb.append(operation.toLowerCase(Locale.ENGLISH).substring(0, operation.length() - 1));
     sb.append("ing an old record or it has been modified by another user (db=v");
     sb.append(databaseVersion);
     sb.append(" your=v");

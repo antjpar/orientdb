@@ -1,25 +1,24 @@
 /*
-  *
-  *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
-  *  *
-  *  *  Licensed under the Apache License, Version 2.0 (the "License");
-  *  *  you may not use this file except in compliance with the License.
-  *  *  You may obtain a copy of the License at
-  *  *
-  *  *       http://www.apache.org/licenses/LICENSE-2.0
-  *  *
-  *  *  Unless required by applicable law or agreed to in writing, software
-  *  *  distributed under the License is distributed on an "AS IS" BASIS,
-  *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-  *  *  See the License for the specific language governing permissions and
-  *  *  limitations under the License.
-  *  *
-  *  * For more information: http://www.orientechnologies.com
-  *
-  */
+ *
+ *  *  Copyright 2014 Orient Technologies LTD (info(at)orientechnologies.com)
+ *  *
+ *  *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  *  you may not use this file except in compliance with the License.
+ *  *  You may obtain a copy of the License at
+ *  *
+ *  *       http://www.apache.org/licenses/LICENSE-2.0
+ *  *
+ *  *  Unless required by applicable law or agreed to in writing, software
+ *  *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  *  See the License for the specific language governing permissions and
+ *  *  limitations under the License.
+ *  *
+ *  * For more information: http://www.orientechnologies.com
+ *
+ */
 package com.orientechnologies.orient.core.db;
 
-import com.orientechnologies.orient.core.Orient;
 import com.orientechnologies.orient.core.cache.OLocalRecordCache;
 import com.orientechnologies.orient.core.command.OCommandOutputListener;
 import com.orientechnologies.orient.core.config.OContextConfiguration;
@@ -28,6 +27,8 @@ import com.orientechnologies.orient.core.db.tool.ODatabaseImport;
 import com.orientechnologies.orient.core.exception.ODatabaseException;
 import com.orientechnologies.orient.core.id.ORID;
 import com.orientechnologies.orient.core.intent.OIntent;
+import com.orientechnologies.orient.core.metadata.security.OToken;
+import com.orientechnologies.orient.core.storage.OCluster;
 import com.orientechnologies.orient.core.storage.ORecordMetadata;
 import com.orientechnologies.orient.core.storage.OStorage;
 
@@ -36,33 +37,52 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Collection;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.concurrent.Callable;
 
 @SuppressWarnings("unchecked")
-public abstract class ODatabaseWrapperAbstract<DB extends ODatabaseInternal> implements ODatabaseInternal {
-  protected DB                          underlying;
-  protected ODatabaseComplexInternal<?> databaseOwner;
+public abstract class ODatabaseWrapperAbstract<DB extends ODatabaseInternal, T> implements ODatabaseInternal<T> {
+  protected DB                   underlying;
+  protected ODatabaseInternal<?> databaseOwner;
 
   public ODatabaseWrapperAbstract(final DB iDatabase) {
     underlying = iDatabase;
-    databaseOwner = (ODatabaseComplexInternal<?>) this;
+    databaseOwner = this;
   }
 
   public <THISDB extends ODatabase> THISDB open(final String iUserName, final String iUserPassword) {
     underlying.open(iUserName, iUserPassword);
-    Orient.instance().getDatabaseFactory().register(databaseOwner);
     return (THISDB) this;
   }
 
+  public <THISDB extends ODatabase> THISDB open(final OToken iToken) {
+    underlying.open(iToken);
+    return (THISDB) this;
+  }
+
+  @Override
+  public ODatabase activateOnCurrentThread() {
+    return underlying.activateOnCurrentThread();
+  }
+
+  @Override
+  public boolean isActiveOnCurrentThread() {
+    return underlying.isActiveOnCurrentThread();
+  }
+
   public <THISDB extends ODatabase> THISDB create() {
-    return create(null);
+    return (THISDB) underlying.create();
+  }
+
+  @Override
+  public <THISDB extends ODatabase> THISDB create(String incrementalBackupPath) {
+    return (THISDB) underlying.create(incrementalBackupPath);
   }
 
   public <THISDB extends ODatabase> THISDB create(final Map<OGlobalConfiguration, Object> iInitialSettings) {
     underlying.create(iInitialSettings);
-    Orient.instance().getDatabaseFactory().register(databaseOwner);
     return (THISDB) this;
   }
 
@@ -81,51 +101,43 @@ public abstract class ODatabaseWrapperAbstract<DB extends ODatabaseInternal> imp
 
   /**
    * Executes a backup of the database. During the backup the database will be frozen in read-only mode.
-   * 
-   * @param out
-   *          OutputStream used to write the backup content. Use a FileOutputStream to make the backup persistent on disk
-   * @param options
-   *          Backup options as Map<String, Object> object
-   * @param callable
-   *          Callback to execute when the database is locked
-   * @param iListener
-   *          Listener called for backup messages
-   * @param compressionLevel
-   *          ZIP Compression level between 0 (no compression) and 9 (maximum). The bigger is the compression, the smaller will be
-   *          the final backup content, but will consume more CPU and time to execute
-   * @param bufferSize
-   *          Buffer size in bytes, the bigger is the buffer, the more efficient will be the compression
+   *
+   * @param out              OutputStream used to write the backup content. Use a FileOutputStream to make the backup persistent on
+   *                         disk
+   * @param options          Backup options as Map<String, Object> object
+   * @param callable         Callback to execute when the database is locked
+   * @param iListener        Listener called for backup messages
+   * @param compressionLevel ZIP Compression level between 0 (no compression) and 9 (maximum). The bigger is the compression, the
+   *                         smaller will be the final backup content, but will consume more CPU and time to execute
+   * @param bufferSize       Buffer size in bytes, the bigger is the buffer, the more efficient will be the compression
+   *
    * @throws IOException
    */
   @Override
-  public void backup(OutputStream out, Map<String, Object> options, Callable<Object> callable,
+  public List<String> backup(OutputStream out, Map<String, Object> options, Callable<Object> callable,
       final OCommandOutputListener iListener, int compressionLevel, int bufferSize) throws IOException {
-    underlying.backup(out, options, callable, iListener, compressionLevel, bufferSize);
+    return underlying.backup(out, options, callable, iListener, compressionLevel, bufferSize);
   }
 
   /**
    * Executes a restore of a database backup. During the restore the database will be frozen in read-only mode.
-   * 
-   * @param in
-   *          InputStream used to read the backup content. Use a FileInputStream to read a backup on a disk
-   * @param options
-   *          Backup options as Map<String, Object> object
-   * @param callable
-   *          Callback to execute when the database is locked
-   * @param iListener
-   *          Listener called for backup messages
+   *
+   * @param in        InputStream used to read the backup content. Use a FileInputStream to read a backup on a disk
+   * @param options   Backup options as Map<String, Object> object
+   * @param callable  Callback to execute when the database is locked
+   * @param iListener Listener called for backup messages
+   *
    * @throws IOException
    * @see ODatabaseImport
    */
   @Override
-  public void restore(InputStream in, Map<String, Object> options, Callable<Object> callable, final OCommandOutputListener iListener)
-      throws IOException {
+  public void restore(InputStream in, Map<String, Object> options, Callable<Object> callable,
+      final OCommandOutputListener iListener) throws IOException {
     underlying.restore(in, options, callable, iListener);
   }
 
   public void close() {
     underlying.close();
-    Orient.instance().getDatabaseFactory().unregister(databaseOwner);
   }
 
   public void replaceStorage(OStorage iNewStorage) {
@@ -134,7 +146,6 @@ public abstract class ODatabaseWrapperAbstract<DB extends ODatabaseInternal> imp
 
   public void drop() {
     underlying.drop();
-    Orient.instance().getDatabaseFactory().unregister(databaseOwner);
   }
 
   public STATUS getStatus() {
@@ -169,6 +180,15 @@ public abstract class ODatabaseWrapperAbstract<DB extends ODatabaseInternal> imp
   public long countClusterElements(final int iClusterId) {
     checkOpeness();
     return underlying.countClusterElements(iClusterId);
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public void truncateCluster(String clusterName) {
+    checkOpeness();
+    underlying.truncateCluster(clusterName);
   }
 
   public long countClusterElements(final int[] iClusterIds) {
@@ -236,9 +256,17 @@ public abstract class ODatabaseWrapperAbstract<DB extends ODatabaseInternal> imp
     return underlying.addCluster(iClusterName, iParameters);
   }
 
+  public Object alterCluster(String iClusterName, OCluster.ATTRIBUTES attribute, Object value) {
+    return underlying.alterCluster(iClusterName, attribute, value);
+  }
+
+  public Object alterCluster(int iClusterId, OCluster.ATTRIBUTES attribute, Object value) {
+    return underlying.alterCluster(iClusterId, attribute, value);
+  }
+
   public boolean dropCluster(final String iClusterName, final boolean iTruncate) {
     getLocalCache().freeCluster(getClusterIdByName(iClusterName));
-    return underlying.dropCluster(iClusterName, true);
+    return underlying.dropCluster(iClusterName, iTruncate);
   }
 
   public boolean dropCluster(final int iClusterId, final boolean iTruncate) {
@@ -252,7 +280,6 @@ public abstract class ODatabaseWrapperAbstract<DB extends ODatabaseInternal> imp
   }
 
   public boolean declareIntent(final OIntent iIntent) {
-    checkOpeness();
     return underlying.declareIntent(iIntent);
   }
 
@@ -260,13 +287,13 @@ public abstract class ODatabaseWrapperAbstract<DB extends ODatabaseInternal> imp
     return (DBTYPE) underlying;
   }
 
-  public ODatabaseComplexInternal<?> getDatabaseOwner() {
+  public ODatabaseInternal<?> getDatabaseOwner() {
     return databaseOwner;
   }
 
-  public ODatabaseComplexInternal<?> setDatabaseOwner(final ODatabaseComplexInternal<?> iOwner) {
+  public ODatabaseInternal<?> setDatabaseOwner(final ODatabaseInternal<?> iOwner) {
     databaseOwner = iOwner;
-    return (ODatabaseComplexInternal<?>) this;
+    return this;
   }
 
   @Override
@@ -312,13 +339,9 @@ public abstract class ODatabaseWrapperAbstract<DB extends ODatabaseInternal> imp
     underlying.unregisterListener(iListener);
   }
 
-  public <V> V callInLock(final Callable<V> iCallable, final boolean iExclusiveLock) {
-    return getStorage().callInLock(iCallable, iExclusiveLock);
-  }
-
   @Override
-  public <V> V callInRecordLock(Callable<V> iCallable, ORID rid, boolean iExclusiveLock) {
-    return underlying.callInRecordLock(iCallable, rid, iExclusiveLock);
+  public <V> V callInLock(Callable<V> iCallable, boolean iExclusiveLock) {
+    return getStorage().callInLock(iCallable, iExclusiveLock);
   }
 
   @Override
@@ -326,35 +349,29 @@ public abstract class ODatabaseWrapperAbstract<DB extends ODatabaseInternal> imp
     return underlying.getRecordMetadata(rid);
   }
 
+  @Override
   public long getSize() {
     return underlying.getSize();
   }
 
+  @Override
   public void freeze(boolean throwException) {
     underlying.freeze(throwException);
   }
 
+  @Override
   public void freeze() {
     underlying.freeze();
   }
 
+  @Override
+  public boolean isFrozen() {
+    return underlying.isFrozen();
+  }
+
+  @Override
   public void release() {
     underlying.release();
-  }
-
-  @Override
-  public void freezeCluster(int iClusterId, boolean throwException) {
-    underlying.freezeCluster(iClusterId, throwException);
-  }
-
-  @Override
-  public void freezeCluster(int iClusterId) {
-    underlying.freezeCluster(iClusterId);
-  }
-
-  @Override
-  public void releaseCluster(int iClusterId) {
-    underlying.releaseCluster(iClusterId);
   }
 
   protected void checkOpeness() {
